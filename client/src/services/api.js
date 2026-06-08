@@ -1,6 +1,13 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+let rawApiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// Normalize API URL to ensure it ends with /api (stripping any trailing slash first)
+rawApiBase = rawApiBase.replace(/\/$/, '');
+if (!rawApiBase.endsWith('/api')) {
+  rawApiBase += '/api';
+}
+
+export const API_BASE = rawApiBase;
 export const IMAGE_BASE = API_BASE.replace(/\/api$/, '');
 
 const api = axios.create({
