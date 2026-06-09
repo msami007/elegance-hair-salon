@@ -2,7 +2,7 @@ const Appointment = require('../models/Appointment');
 const Barber = require('../models/Barber');
 const Client = require('../models/Client');
 const Service = require('../models/Service');
-const { sendBookingConfirmation } = require('../services/twilio');
+const { sendBookingConfirmation, normalizePhone } = require('../services/twilio');
 const { matchBarbers } = require('../services/matching');
 const dayjs = require('dayjs');
 
@@ -74,13 +74,14 @@ exports.createAppointment = async (req, res) => {
     if (clientId) {
       client = await Client.findById(clientId);
     } else if (phone) {
-      client = await Client.findOne({ salonId, phone });
+      const normalizedPhone = normalizePhone(phone);
+      client = await Client.findOne({ salonId, phone: normalizedPhone });
       if (!client) {
         client = await Client.create({
           salonId,
           firstName: firstName || '',
           lastName: lastName || '',
-          phone,
+          phone: normalizedPhone,
           email: email || '',
           source: source === 'online' ? 'booking-form' : source || 'booking-form',
         });

@@ -31,6 +31,10 @@ export const lookupClient = (phone, salonId) =>
   api.get('/clients/lookup', { params: { phone, salonId } }).then(r => r.data);
 export const getClients = (params) => api.get('/clients', { params }).then(r => r.data);
 
+// ── Client Retention ──
+export const getRetentionData = (params) => api.get('/clients/retention', { params }).then(r => r.data);
+export const sendRetentionSMS = (clientId, message) => api.post('/clients/retention/send-sms', { clientId, message }).then(r => r.data);
+
 // ── Appointments ──
 export const getAppointments = (params) => api.get('/appointments', { params }).then(r => r.data);
 export const getAppointment = (id) => api.get(`/appointments/${id}`).then(r => r.data);

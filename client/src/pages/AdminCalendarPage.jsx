@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getAppointments, getBarbers, getLocations, getServices, updateAppointment, createAppointment, IMAGE_BASE } from '../services/api';
+import { getAppointments, getBarbers, getLocations, getServices, updateAppointment, createAppointment, getRetentionData, sendRetentionSMS, IMAGE_BASE } from '../services/api';
 import dayjs from 'dayjs';
 import './AdminCalendarPage.css';
 
@@ -15,6 +15,15 @@ export default function AdminCalendarPage() {
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [salonId, setSalonId] = useState('');
+
+  // Retention State
+  const [activeTab, setActiveTab] = useState('calendar'); // 'calendar' | 'retention'
+  const [retentionData, setRetentionData] = useState({ summary: {}, clients: [] });
+  const [retentionLoading, setRetentionLoading] = useState(false);
+  const [selectedRetentionClient, setSelectedRetentionClient] = useState(null);
+  const [smsMessage, setSmsMessage] = useState('');
+  const [smsSending, setSmsSending] = useState(false);
+  const [smsSuccess, setSmsSuccess] = useState(null);
 
   // Init
   useEffect(() => {
@@ -42,6 +51,26 @@ export default function AdminCalendarPage() {
   }, [selectedLocation, weekStart]);
 
   useEffect(loadAppointments, [loadAppointments]);
+
+  const loadRetentionData = useCallback(() => {
+    if (!selectedLocation) return;
+    setRetentionLoading(true);
+    getRetentionData({ salonId })
+      .then(data => {
+        setRetentionData(data);
+        setRetentionLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to load retention data:', err);
+        setRetentionLoading(false);
+      });
+  }, [selectedLocation, salonId]);
+
+  useEffect(() => {
+    if (activeTab === 'retention') {
+      loadRetentionData();
+    }
+  }, [activeTab, loadRetentionData]);
 
   const weekDays = Array.from({ length: 7 }, (_, i) => weekStart.add(i, 'day'));
 
@@ -104,6 +133,36 @@ export default function AdminCalendarPage() {
     }
   };
 
+  const handleOpenSMSModal = (client) => {
+    setSelectedRetentionClient(client);
+    setSmsSuccess(null);
+    const code = 'FRESH15';
+    const msg = `Elegance Salon: Hi ${client.firstName}! We miss you. Use code ${code} for 15% off your next visit. Book now: http://bit.ly/elegance-salon`;
+    setSmsMessage(msg);
+  };
+
+  const handleSendSMS = async () => {
+    setSmsSending(true);
+    setSmsSuccess(null);
+    try {
+      const result = await sendRetentionSMS(selectedRetentionClient._id, smsMessage);
+      if (result.success) {
+        setSmsSuccess(`✓ SMS Sent successfully! ${result.mock ? '(Mock Mode)' : ''}`);
+        loadRetentionData();
+        setTimeout(() => {
+          setSelectedRetentionClient(null);
+        }, 2000);
+      } else {
+        alert(result.error || 'Failed to send SMS');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error sending SMS');
+    } finally {
+      setSmsSending(false);
+    }
+  };
+
   return (
     <div className="admin-page">
       {/* Header */}
@@ -126,73 +185,197 @@ export default function AdminCalendarPage() {
         </div>
       </header>
 
-      {/* Week Navigation */}
-      <div className="week-nav">
-        <button className="btn btn-ghost" onClick={() => setWeekStart(w => w.subtract(7, 'day'))}>← Prev</button>
-        <h2 className="week-title">
-          {weekStart.format('MMM D')} – {weekStart.add(6, 'day').format('MMM D, YYYY')}
-        </h2>
-        <button className="btn btn-ghost" onClick={() => setWeekStart(dayjs().startOf('week'))}>Today</button>
-        <button className="btn btn-ghost" onClick={() => setWeekStart(w => w.add(7, 'day'))}>Next →</button>
+      {/* Tabs */}
+      <div className="admin-tabs-nav">
+        <button className={`tab-nav-btn ${activeTab === 'calendar' ? 'active' : ''}`} onClick={() => setActiveTab('calendar')}>
+          📅 Appointments Calendar
+        </button>
+        <button className={`tab-nav-btn ${activeTab === 'retention' ? 'active' : ''}`} onClick={() => setActiveTab('retention')}>
+          ✨ AI Client Retention
+        </button>
       </div>
 
-      {/* Calendar Grid */}
-      <div className="calendar-container">
-        <div className="calendar-grid">
-          {/* Time column */}
-          <div className="time-column">
-            <div className="day-header-cell" />
-            {HOURS.map(h => (
-              <div key={h} className="time-label">
-                {dayjs(`2024-01-01 ${h}`).format('h A')}
-              </div>
-            ))}
+      {activeTab === 'calendar' ? (
+        <>
+          {/* Week Navigation */}
+          <div className="week-nav">
+            <button className="btn btn-ghost" onClick={() => setWeekStart(w => w.subtract(7, 'day'))}>← Prev</button>
+            <h2 className="week-title">
+              {weekStart.format('MMM D')} – {weekStart.add(6, 'day').format('MMM D, YYYY')}
+            </h2>
+            <button className="btn btn-ghost" onClick={() => setWeekStart(dayjs().startOf('week'))}>Today</button>
+            <button className="btn btn-ghost" onClick={() => setWeekStart(w => w.add(7, 'day'))}>Next →</button>
           </div>
 
-          {/* Day columns */}
-          {weekDays.map(day => (
-            <div key={day.format('YYYY-MM-DD')} className={`day-column ${day.isSame(dayjs(), 'day') ? 'today' : ''}`}>
-              <div className="day-header-cell">
-                <span className="day-name">{day.format('ddd')}</span>
-                <span className={`day-number ${day.isSame(dayjs(), 'day') ? 'today-num' : ''}`}>{day.format('D')}</span>
+          {/* Calendar Grid */}
+          <div className="calendar-container">
+            <div className="calendar-grid">
+              {/* Time column */}
+              <div className="time-column">
+                <div className="day-header-cell" />
+                {HOURS.map(h => (
+                  <div key={h} className="time-label">
+                    {dayjs(`2024-01-01 ${h}`).format('h A')}
+                  </div>
+                ))}
               </div>
-              <div className="day-body">
-                {/* Hour grid lines */}
-                {HOURS.map(h => <div key={h} className="hour-line" />)}
 
-                {/* Appointments for each barber */}
-                {barbers.map(barber => {
-                  const appts = getAppointmentsForBarberDay(barber._id, day);
-                  return appts.map(appt => (
-                    <div key={appt._id}
-                      className={`appt-block ${appt.status}`}
-                      style={{
-                        top: `${getSlotPosition(appt.startTime)}px`,
-                        height: `${getSlotHeight(appt.startTime, appt.endTime)}px`,
-                      }}
-                      onClick={() => setSelectedAppointment(appt)}
-                      title={`${appt.clientId?.firstName} ${appt.clientId?.lastName} - ${appt.serviceId?.name}`}>
-                      <span className="appt-time">{dayjs(`2024-01-01 ${appt.startTime}`).format('h:mm')}</span>
-                      <span className="appt-client">{appt.clientId?.firstName}</span>
-                      <span className="appt-barber-tag">{appt.barberId?.name}</span>
-                    </div>
-                  ));
-                })}
+              {/* Day columns */}
+              {weekDays.map(day => (
+                <div key={day.format('YYYY-MM-DD')} className={`day-column ${day.isSame(dayjs(), 'day') ? 'today' : ''}`}>
+                  <div className="day-header-cell">
+                    <span className="day-name">{day.format('ddd')}</span>
+                    <span className={`day-number ${day.isSame(dayjs(), 'day') ? 'today-num' : ''}`}>{day.format('D')}</span>
+                  </div>
+                  <div className="day-body">
+                    {/* Hour grid lines */}
+                    {HOURS.map(h => <div key={h} className="hour-line" />)}
+
+                    {/* Appointments for each barber */}
+                    {barbers.map(barber => {
+                      const appts = getAppointmentsForBarberDay(barber._id, day);
+                      return appts.map(appt => (
+                        <div key={appt._id}
+                          className={`appt-block ${appt.status}`}
+                          style={{
+                            top: `${getSlotPosition(appt.startTime)}px`,
+                            height: `${getSlotHeight(appt.startTime, appt.endTime)}px`,
+                          }}
+                          onClick={() => setSelectedAppointment(appt)}
+                          title={`${appt.clientId?.firstName} ${appt.clientId?.lastName} - ${appt.serviceId?.name}`}>
+                          <span className="appt-time">{dayjs(`2024-01-01 ${appt.startTime}`).format('h:mm')}</span>
+                          <span className="appt-client">{appt.clientId?.firstName}</span>
+                          <span className="appt-barber-tag">{appt.barberId?.name}</span>
+                        </div>
+                      ));
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Barber Legend */}
+          <div className="barber-legend">
+            {barbers.map(b => (
+              <span key={b._id} className="legend-item">
+                <span className="legend-dot" />
+                {b.name} · {b.title}
+              </span>
+            ))}
+          </div>
+        </>
+      ) : (
+        /* Client Retention View */
+        <div className="retention-dashboard animate-fade-in">
+          <div className="metrics-grid">
+            <div className="metric-card">
+              <span className="metric-icon">👥</span>
+              <div className="metric-info">
+                <h3>Total Clients</h3>
+                <p className="metric-value">{retentionData.summary?.totalClients || 0}</p>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
+            <div className="metric-card active">
+              <span className="metric-icon">🟢</span>
+              <div className="metric-info">
+                <h3>Active</h3>
+                <p className="metric-value">{retentionData.summary?.activeCount || 0}</p>
+                <small className="metric-sub">Visited in last 30d</small>
+              </div>
+            </div>
+            <div className="metric-card slipping">
+              <span className="metric-icon">🟡</span>
+              <div className="metric-info">
+                <h3>Slipping</h3>
+                <p className="metric-value">{retentionData.summary?.slippingCount || 0}</p>
+                <small className="metric-sub">Last visit 30-60d</small>
+              </div>
+            </div>
+            <div className="metric-card dormant">
+              <span className="metric-icon">🔴</span>
+              <div className="metric-info">
+                <h3>At Risk</h3>
+                <p className="metric-value">{retentionData.summary?.dormantCount || 0}</p>
+                <small className="metric-sub">No visit in 60d+ (2m+)</small>
+              </div>
+            </div>
+            <div className="metric-card loyalty">
+              <span className="metric-icon">📈</span>
+              <div className="metric-info">
+                <h3>Retention Rate</h3>
+                <p className="metric-value">{retentionData.summary?.retentionRate || 0}%</p>
+                <small className="metric-sub">Loyalty index score</small>
+              </div>
+            </div>
+          </div>
 
-      {/* Barber Legend */}
-      <div className="barber-legend">
-        {barbers.map(b => (
-          <span key={b._id} className="legend-item">
-            <span className="legend-dot" />
-            {b.name} · {b.title}
-          </span>
-        ))}
-      </div>
+          <div className="retention-table-container">
+            <div className="table-header">
+              <h2>At-Risk & Dormant Clients</h2>
+              <p>Clients who haven't booked an appointment recently. Use AI re-engagement to win them back.</p>
+            </div>
+
+            {retentionLoading ? (
+              <div className="retention-loading">Loading retention insights...</div>
+            ) : retentionData.clients?.length === 0 ? (
+              <div className="retention-empty">All clients are active! Great job keeping them engaged. 🎉</div>
+            ) : (
+              <table className="retention-table">
+                <thead>
+                  <tr>
+                    <th>Client</th>
+                    <th>Last Visit</th>
+                    <th>Days Idle</th>
+                    <th>Status</th>
+                    <th>Preferred Barber</th>
+                    <th>AI Prediction & Recommendation</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {retentionData.clients?.map(client => (
+                    <tr key={client._id} className={client.engagementStatus}>
+                      <td>
+                        <div className="client-cell">
+                          <strong>{client.firstName} {client.lastName}</strong>
+                          <span className="client-sub">{client.phone}</span>
+                        </div>
+                      </td>
+                      <td>{client.lastVisit ? dayjs(client.lastVisit).format('MMM D, YYYY') : 'Never'}</td>
+                      <td>
+                        <span className={`days-badge ${client.daysSinceLastVisit > 60 ? 'critical' : 'warning'}`}>
+                          {client.daysSinceLastVisit} days
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`status-badge ${client.engagementStatus}`}>
+                          {client.engagementStatus === 'dormant' ? 'At Risk' : 'Slipping'}
+                        </span>
+                      </td>
+                      <td>{client.preferredBarberId?.name || 'Any Stylist'}</td>
+                      <td>
+                        <div className="ai-rec-box">
+                          <span className="ai-sparkle">✨ AI Suggestion:</span>
+                          <p className="ai-desc">{client.aiRecommendation}</p>
+                          {client.tags?.includes('sms-reengaged') && (
+                            <span className="reengaged-tag">✓ Re-engaged</span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <button className="btn btn-gold btn-sm" onClick={() => handleOpenSMSModal(client)}>
+                          ✉ Re-Engage
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Appointment Detail Panel */}
       {selectedAppointment && (
@@ -348,6 +531,41 @@ export default function AdminCalendarPage() {
                 onClick={handleAddAppointment}
                 disabled={!addForm.firstName || !addForm.phone || !addForm.serviceId || !addForm.barberId}>
                 Create Appointment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SMS Re-engagement Modal */}
+      {selectedRetentionClient && (
+        <div className="detail-overlay" onClick={() => setSelectedRetentionClient(null)}>
+          <div className="detail-panel add-modal sms-modal animate-slide-in" onClick={e => e.stopPropagation()}>
+            <div className="detail-header">
+              <h3>✉ Send SMS Promotion</h3>
+              <button className="btn btn-ghost" onClick={() => setSelectedRetentionClient(null)}>✕</button>
+            </div>
+            <div className="detail-body">
+              <div className="sms-client-summary">
+                <p>Sending message to: <strong>{selectedRetentionClient.firstName} {selectedRetentionClient.lastName}</strong></p>
+                <p className="client-sub">{selectedRetentionClient.phone} · Last visited {selectedRetentionClient.daysSinceLastVisit} days ago</p>
+              </div>
+
+              <div className="form-group" style={{ marginTop: '16px' }}>
+                <label className="form-label">Custom Re-engagement Message</label>
+                <textarea className="form-input sms-textarea"
+                  value={smsMessage}
+                  onChange={e => setSmsMessage(e.target.value)}
+                  rows={5}
+                  placeholder="Enter custom SMS text..." />
+              </div>
+
+              {smsSuccess && <div className="sms-success-banner">{smsSuccess}</div>}
+
+              <button className="btn btn-gold btn-lg" style={{ width: '100%', marginTop: '16px' }}
+                onClick={handleSendSMS}
+                disabled={smsSending || !smsMessage}>
+                {smsSending ? 'Sending SMS...' : '✉ Send Re-engagement SMS'}
               </button>
             </div>
           </div>

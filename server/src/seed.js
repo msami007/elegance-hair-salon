@@ -175,11 +175,11 @@ async function seed() {
 
   // ── Sample Clients ──
   const clients = await Client.insertMany([
-    { salonId: salon._id, firstName: 'Adam', lastName: 'Bissonnette', phone: '+13125551001', email: 'adam.b@email.com', visitCount: 8, hairType: 'straight', source: 'booksy-import' },
-    { salonId: salon._id, firstName: 'Maria', lastName: 'Rodriguez', phone: '+13125551002', email: 'maria.r@email.com', visitCount: 12, hairType: 'curly', source: 'booksy-import' },
-    { salonId: salon._id, firstName: 'James', lastName: 'Chen', phone: '+13125551003', email: 'james.c@email.com', visitCount: 5, hairType: 'straight', source: 'booksy-import' },
-    { salonId: salon._id, firstName: 'Sophia', lastName: 'Williams', phone: '+13125551004', email: 'sophia.w@email.com', visitCount: 3, hairType: 'wavy', source: 'booking-form' },
-    { salonId: salon._id, firstName: 'Michael', lastName: 'Johnson', phone: '+13125551005', email: 'mike.j@email.com', visitCount: 15, hairType: 'curly', source: 'booksy-import' },
+    { salonId: salon._id, firstName: 'Adam', lastName: 'Bissonnette', phone: '+13125551001', email: 'adam.b@email.com', visitCount: 8, hairType: 'straight', source: 'booksy-import', lastVisit: dayjs().subtract(15, 'day').toDate(), preferredBarberId: ahmad._id },
+    { salonId: salon._id, firstName: 'Maria', lastName: 'Rodriguez', phone: '+13125551002', email: 'maria.r@email.com', visitCount: 12, hairType: 'curly', source: 'booksy-import', lastVisit: dayjs().subtract(5, 'day').toDate(), preferredBarberId: shamiram._id },
+    { salonId: salon._id, firstName: 'James', lastName: 'Chen', phone: '+13125551003', email: 'james.c@email.com', visitCount: 5, hairType: 'straight', source: 'booksy-import', lastVisit: dayjs().subtract(42, 'day').toDate(), preferredBarberId: lucky._id },
+    { salonId: salon._id, firstName: 'Sophia', lastName: 'Williams', phone: '+13125551004', email: 'sophia.w@email.com', visitCount: 3, hairType: 'wavy', source: 'booking-form', lastVisit: dayjs().subtract(74, 'day').toDate(), preferredBarberId: oskar._id },
+    { salonId: salon._id, firstName: 'Michael', lastName: 'Johnson', phone: '+13125551005', email: 'mike.j@email.com', visitCount: 15, hairType: 'curly', source: 'booksy-import', lastVisit: dayjs().subtract(105, 'day').toDate(), preferredBarberId: marcus._id },
   ]);
 
   // ── Sample Appointments (this week) ──
