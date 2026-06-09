@@ -169,8 +169,11 @@ export default function AdminCalendarPage() {
       <header className="admin-header">
         <div className="admin-header-inner">
           <div className="admin-brand">
-            <h1>Elegance</h1>
-            <span className="admin-badge">Admin</span>
+            <img src="/logo.jpeg" alt="Elegance Logo" className="brand-logo" />
+            <div className="admin-brand-text">
+              <h1>Elegance</h1>
+              <span className="admin-badge">Admin</span>
+            </div>
           </div>
           <div className="admin-actions">
             <select className="form-input form-select loc-select"
@@ -188,10 +191,10 @@ export default function AdminCalendarPage() {
       {/* Tabs */}
       <div className="admin-tabs-nav">
         <button className={`tab-nav-btn ${activeTab === 'calendar' ? 'active' : ''}`} onClick={() => setActiveTab('calendar')}>
-          📅 Appointments Calendar
+          Appointments Calendar
         </button>
         <button className={`tab-nav-btn ${activeTab === 'retention' ? 'active' : ''}`} onClick={() => setActiveTab('retention')}>
-          ✨ AI Client Retention
+          Client Retention
         </button>
       </div>
 
@@ -270,14 +273,14 @@ export default function AdminCalendarPage() {
         <div className="retention-dashboard animate-fade-in">
           <div className="metrics-grid">
             <div className="metric-card">
-              <span className="metric-icon">👥</span>
+              <span className="metric-dot total"></span>
               <div className="metric-info">
                 <h3>Total Clients</h3>
                 <p className="metric-value">{retentionData.summary?.totalClients || 0}</p>
               </div>
             </div>
             <div className="metric-card active">
-              <span className="metric-icon">🟢</span>
+              <span className="metric-dot active"></span>
               <div className="metric-info">
                 <h3>Active</h3>
                 <p className="metric-value">{retentionData.summary?.activeCount || 0}</p>
@@ -285,7 +288,7 @@ export default function AdminCalendarPage() {
               </div>
             </div>
             <div className="metric-card slipping">
-              <span className="metric-icon">🟡</span>
+              <span className="metric-dot slipping"></span>
               <div className="metric-info">
                 <h3>Slipping</h3>
                 <p className="metric-value">{retentionData.summary?.slippingCount || 0}</p>
@@ -293,7 +296,7 @@ export default function AdminCalendarPage() {
               </div>
             </div>
             <div className="metric-card dormant">
-              <span className="metric-icon">🔴</span>
+              <span className="metric-dot dormant"></span>
               <div className="metric-info">
                 <h3>At Risk</h3>
                 <p className="metric-value">{retentionData.summary?.dormantCount || 0}</p>
@@ -301,7 +304,7 @@ export default function AdminCalendarPage() {
               </div>
             </div>
             <div className="metric-card loyalty">
-              <span className="metric-icon">📈</span>
+              <span className="metric-dot loyalty"></span>
               <div className="metric-info">
                 <h3>Retention Rate</h3>
                 <p className="metric-value">{retentionData.summary?.retentionRate || 0}%</p>
@@ -319,7 +322,7 @@ export default function AdminCalendarPage() {
             {retentionLoading ? (
               <div className="retention-loading">Loading retention insights...</div>
             ) : retentionData.clients?.length === 0 ? (
-              <div className="retention-empty">All clients are active! Great job keeping them engaged. 🎉</div>
+              <div className="retention-empty">All clients are active! Great job keeping them engaged.</div>
             ) : (
               <table className="retention-table">
                 <thead>
@@ -356,7 +359,7 @@ export default function AdminCalendarPage() {
                       <td>{client.preferredBarberId?.name || 'Any Stylist'}</td>
                       <td>
                         <div className="ai-rec-box">
-                          <span className="ai-sparkle">✨ AI Suggestion:</span>
+                          <span className="ai-sparkle">AI Suggestion:</span>
                           <p className="ai-desc">{client.aiRecommendation}</p>
                           {client.tags?.includes('sms-reengaged') && (
                             <span className="reengaged-tag">✓ Re-engaged</span>
@@ -365,7 +368,7 @@ export default function AdminCalendarPage() {
                       </td>
                       <td>
                         <button className="btn btn-gold btn-sm" onClick={() => handleOpenSMSModal(client)}>
-                          ✉ Re-Engage
+                          Re-Engage
                         </button>
                       </td>
                     </tr>
@@ -542,7 +545,7 @@ export default function AdminCalendarPage() {
         <div className="detail-overlay" onClick={() => setSelectedRetentionClient(null)}>
           <div className="detail-panel add-modal sms-modal animate-slide-in" onClick={e => e.stopPropagation()}>
             <div className="detail-header">
-              <h3>✉ Send SMS Promotion</h3>
+              <h3>Send SMS Promotion</h3>
               <button className="btn btn-ghost" onClick={() => setSelectedRetentionClient(null)}>✕</button>
             </div>
             <div className="detail-body">
@@ -565,7 +568,7 @@ export default function AdminCalendarPage() {
               <button className="btn btn-gold btn-lg" style={{ width: '100%', marginTop: '16px' }}
                 onClick={handleSendSMS}
                 disabled={smsSending || !smsMessage}>
-                {smsSending ? 'Sending SMS...' : '✉ Send Re-engagement SMS'}
+                {smsSending ? 'Sending SMS...' : 'Send Re-engagement SMS'}
               </button>
             </div>
           </div>

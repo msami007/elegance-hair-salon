@@ -6,33 +6,33 @@ import './BookingPage.css';
 const SALON_SLUG = 'elegance-hair-salon';
 
 const SERVICE_CATEGORIES = [
-  { key: 'mens-services', label: "Men's Services", icon: '💈' },
-  { key: 'womens-services', label: "Women's Services", icon: '✂️' },
-  { key: 'color', label: 'Color', icon: '🎨' },
-  { key: 'mens-color', label: "Men's Color", icon: '🎨' },
-  { key: 'smoothing-perms', label: 'Smoothing & Perms', icon: '✨' },
-  { key: 'threading-wax', label: 'Threading & Wax', icon: '🧵' },
+  { key: 'mens-services', label: "Men's Services" },
+  { key: 'womens-services', label: "Women's Services" },
+  { key: 'color', label: 'Color' },
+  { key: 'mens-color', label: "Men's Color" },
+  { key: 'smoothing-perms', label: 'Smoothing & Perms' },
+  { key: 'threading-wax', label: 'Threading & Wax' },
 ];
 
 const STYLE_OPTIONS = [
-  { key: 'skin-fade', label: 'Skin Fade', emoji: '💇‍♂️' },
-  { key: 'fade', label: 'Classic Fade', emoji: '💇‍♂️' },
-  { key: 'classic', label: 'Classic Cut', emoji: '✂️' },
-  { key: 'textured', label: 'Textured', emoji: '〰️' },
-  { key: 'buzz', label: 'Buzz Cut', emoji: '⚡' },
-  { key: 'beard', label: 'Beard Trim', emoji: '🧔' },
-  { key: 'lineup', label: 'Line Up', emoji: '📐' },
-  { key: 'styling', label: 'Styling', emoji: '💁‍♀️' },
-  { key: 'blowout', label: 'Blowout', emoji: '💨' },
-  { key: 'curly', label: 'Curly Hair', emoji: '🌀' },
-  { key: 'color', label: 'Color Work', emoji: '🎨' },
-  { key: 'balayage', label: 'Balayage', emoji: '🌅' },
-  { key: 'highlights', label: 'Highlights', emoji: '✨' },
-  { key: 'extensions', label: 'Extensions', emoji: '🔗' },
-  { key: 'updo', label: 'Updo', emoji: '👑' },
-  { key: 'keratin', label: 'Keratin', emoji: '💎' },
-  { key: 'smoothing', label: 'Smoothing', emoji: '🧴' },
-  { key: 'perm', label: 'Perm', emoji: '🌊' },
+  { key: 'skin-fade', label: 'Skin Fade' },
+  { key: 'fade', label: 'Classic Fade' },
+  { key: 'classic', label: 'Classic Cut' },
+  { key: 'textured', label: 'Textured' },
+  { key: 'buzz', label: 'Buzz Cut' },
+  { key: 'beard', label: 'Beard Trim' },
+  { key: 'lineup', label: 'Line Up' },
+  { key: 'styling', label: 'Styling' },
+  { key: 'blowout', label: 'Blowout' },
+  { key: 'curly', label: 'Curly Hair' },
+  { key: 'color', label: 'Color Work' },
+  { key: 'balayage', label: 'Balayage' },
+  { key: 'highlights', label: 'Highlights' },
+  { key: 'extensions', label: 'Extensions' },
+  { key: 'updo', label: 'Updo' },
+  { key: 'keratin', label: 'Keratin' },
+  { key: 'smoothing', label: 'Smoothing' },
+  { key: 'perm', label: 'Perm' },
 ];
 
 const STEPS = ['customer', 'service', 'style', 'datetime', 'barber', 'confirm'];
@@ -242,8 +242,11 @@ export default function BookingPage() {
       <header className="booking-header">
         <div className="booking-header-inner">
           <div className="brand">
-            <h1 className="brand-name">Elegance</h1>
-            <p className="brand-sub">Hair Salon & Barbershop</p>
+            <img src="/logo.jpeg" alt="Elegance Logo" className="brand-logo" />
+            <div className="brand-text">
+              <h1 className="brand-name">Elegance</h1>
+              <p className="brand-sub">Hair Salon & Barbershop</p>
+            </div>
           </div>
           <a href="/admin" className="btn btn-ghost btn-sm">Admin</a>
         </div>
@@ -281,7 +284,6 @@ export default function BookingPage() {
                     <button key={loc._id}
                       className={`location-card ${selectedLocation === loc._id ? 'selected' : ''}`}
                       onClick={() => setSelectedLocation(loc._id)}>
-                      <span className="loc-icon">📍</span>
                       <div>
                         <strong>{loc.name}</strong>
                         <small>{loc.address}, {loc.city}</small>
@@ -318,9 +320,8 @@ export default function BookingPage() {
               </div>
               {existingClient && (
                 <div className="client-found animate-slide-up">
-                  <span className="found-icon">✅</span>
                   <div>
-                    <strong>Welcome back, {existingClient.firstName}!</strong>
+                    <strong>✓ Welcome back, {existingClient.firstName}!</strong>
                     <small>{existingClient.visitCount} previous visits</small>
                   </div>
                 </div>
@@ -363,7 +364,6 @@ export default function BookingPage() {
                 <button key={cat.key}
                   className={`category-card ${selectedCategory === cat.key ? 'selected' : ''}`}
                   onClick={() => { setSelectedCategory(cat.key); setSelectedService(null); }}>
-                  <span className="cat-icon">{cat.icon}</span>
                   <span className="cat-label">{cat.label}</span>
                   <span className="cat-count">{services.filter(s => s.category === cat.key).length}</span>
                 </button>
@@ -416,7 +416,6 @@ export default function BookingPage() {
                 <button key={style.key}
                   className={`style-card ${selectedStyle === style.key ? 'selected' : ''}`}
                   onClick={() => setSelectedStyle(style.key)}>
-                  <span className="style-emoji">{style.emoji}</span>
                   <span className="style-label">{style.label}</span>
                 </button>
               ))}
@@ -435,7 +434,7 @@ export default function BookingPage() {
                   </div>
                 ) : (
                   <div className="photo-placeholder">
-                    <span className="upload-icon">📷</span>
+                    <span className="upload-icon-text">+</span>
                     <span>Click to upload a reference photo</span>
                   </div>
                 )}
@@ -491,7 +490,7 @@ export default function BookingPage() {
 
             {recommendations.length > 0 && (
               <div className="recommendation-section">
-                <h3 className="rec-title">✨ AI Recommendations</h3>
+                <h3 className="rec-title">AI Recommendations</h3>
                 <div className="barber-cards">
                   {recommendations.slice(0, 2).map((rec, i) => (
                     <button key={rec._id}
@@ -542,41 +541,46 @@ export default function BookingPage() {
         {/* Step 5: Confirmation */}
         {step === 5 && bookingResult && (
           <div className="step-container animate-fade-in confirmation-step">
-            <div className="confirm-icon">✅</div>
+            <div className="confirm-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="success-checkmark">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+              </svg>
+            </div>
             <h2>You're All Set!</h2>
             <p className="confirm-subtitle">Your appointment has been confirmed</p>
 
             <div className="confirm-card">
               <div className="confirm-row">
-                <span className="confirm-label">📋 Service</span>
+                <span className="confirm-label">Service</span>
                 <span>{bookingResult.appointment.serviceId?.name}</span>
               </div>
               <div className="confirm-row">
-                <span className="confirm-label">💈 Barber</span>
+                <span className="confirm-label">Barber</span>
                 <span>{bookingResult.appointment.barberId?.name}</span>
               </div>
               <div className="confirm-row">
-                <span className="confirm-label">📅 Date</span>
+                <span className="confirm-label">Date</span>
                 <span>{dayjs(bookingResult.appointment.date).format('ddd, MMM D, YYYY')}</span>
               </div>
               <div className="confirm-row">
-                <span className="confirm-label">🕐 Time</span>
+                <span className="confirm-label">Time</span>
                 <span>{dayjs(`2024-01-01 ${bookingResult.appointment.startTime}`).format('h:mm A')}</span>
               </div>
               <div className="confirm-row">
-                <span className="confirm-label">📍 Location</span>
+                <span className="confirm-label">Location</span>
                 <span>{bookingResult.appointment.locationId?.name}</span>
               </div>
               <div className="confirm-row">
-                <span className="confirm-label">💰 Price</span>
+                <span className="confirm-label">Price</span>
                 <span>{formatPrice(bookingResult.appointment.serviceId?.price, false)}</span>
               </div>
             </div>
 
             <div className={`sms-status ${bookingResult.sms?.success ? 'sent' : 'failed'}`}>
               {bookingResult.sms?.success
-                ? `📱 Confirmation SMS ${bookingResult.sms.mock ? '(mock)' : ''} sent to your phone`
-                : '⚠️ SMS could not be sent — your appointment is still confirmed'}
+                ? `Confirmation SMS ${bookingResult.sms.mock ? '(mock)' : ''} sent to your phone`
+                : 'SMS could not be sent — your appointment is still confirmed'}
             </div>
 
             <button className="btn btn-gold btn-lg" onClick={() => {

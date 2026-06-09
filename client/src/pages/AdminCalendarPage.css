@@ -20,12 +20,18 @@
   align-items: center;
 }
 .admin-brand { display: flex; align-items: center; gap: var(--space-3); }
+.admin-brand .brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  border: 1.5px solid var(--color-gold);
+}
+.admin-brand-text { display: flex; align-items: center; gap: var(--space-2); }
 .admin-brand h1 {
   font-family: var(--font-display);
-  font-size: 1.5rem;
-  background: linear-gradient(135deg, var(--color-white), var(--color-gold));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  font-size: 1.375rem;
+  color: var(--color-white);
 }
 .admin-badge {
   background: var(--color-gold);
@@ -362,16 +368,19 @@
 .metric-card:hover {
   transform: translateY(-2px);
 }
-.metric-icon {
-  font-size: 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 50px;
-  height: 50px;
-  background: var(--color-gray-50);
-  border-radius: var(--radius-md);
+.metric-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: block;
+  flex-shrink: 0;
 }
+.metric-dot.total { background: var(--color-gray-400); }
+.metric-dot.active { background: var(--color-success); }
+.metric-dot.slipping { background: var(--color-warning); }
+.metric-dot.dormant { background: var(--color-error); }
+.metric-dot.loyalty { background: var(--color-gold); }
+
 .metric-info h3 {
   font-size: 0.75rem;
   text-transform: uppercase;
@@ -391,11 +400,6 @@
   display: block;
   margin-top: 4px;
 }
-
-.metric-card.active .metric-icon { background: rgba(34, 197, 94, 0.1); }
-.metric-card.slipping .metric-icon { background: rgba(234, 179, 8, 0.1); }
-.metric-card.dormant .metric-icon { background: rgba(239, 68, 68, 0.1); }
-.metric-card.loyalty .metric-icon { background: rgba(200, 169, 110, 0.1); }
 
 /* Table and Containers */
 .retention-table-container {
