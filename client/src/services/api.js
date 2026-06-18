@@ -56,4 +56,27 @@ export const uploadPhoto = (file) => {
   }).then(r => r.data);
 };
 
+// ── Admin Staff CRUD ──
+export const createBarber = (data) => api.post('/barbers', data).then(r => r.data);
+export const updateBarber = (id, data) => api.patch(`/barbers/${id}`, data).then(r => r.data);
+export const deleteBarber = (id) => api.delete(`/barbers/${id}`).then(r => r.data);
+
+// ── Admin Service CRUD ──
+export const createService = (data) => api.post('/services', data).then(r => r.data);
+export const updateService = (id, data) => api.patch(`/services/${id}`, data).then(r => r.data);
+export const deleteService = (id) => api.delete(`/services/${id}`).then(r => r.data);
+
+// ── Admin Client CRUD ──
+export const createClient = (data) => api.post('/clients', data).then(r => r.data);
+export const updateClient = (id, data) => api.patch(`/clients/${id}`, data).then(r => r.data);
+
+// ── Salon Settings ──
+export const updateSalonSettings = (id, settings) => api.patch(`/salon/${id}/settings`, settings).then(r => r.data);
+
+// ── AI Copilot ──
+export const sendCopilotMessage = (message, salonId) => api.post('/copilot/chat', { message, salonId }).then(r => r.data);
+
+// ── Admin Reports ──
+export const getBarberPerformanceReport = (salonId) => api.get('/reports/barber-performance', { params: { salonId } }).then(r => r.data);
+
 export default api;

@@ -11,6 +11,13 @@ const salonSchema = new mongoose.Schema({
   contactEmail: { type: String, default: '' },
   website: { type: String, default: '' },
   instagramHandle: { type: String, default: '' },
+  settings: {
+    twilioTollFreeNumber: { type: String, default: '' },
+    reminderHours: { type: Number, default: 24 },
+    voiceCallEscalation: { type: Boolean, default: false },
+    aiAutoReschedule: { type: Boolean, default: false },
+    aiActionPermissions: { type: Boolean, default: false },
+  },
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
 

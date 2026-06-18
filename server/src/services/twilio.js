@@ -1,6 +1,19 @@
 const twilio = require('twilio');
+const Salon = require('../models/Salon');
 
 let client = null;
+
+async function getSenderNumber() {
+  try {
+    const salon = await Salon.findOne().lean();
+    if (salon && salon.settings && salon.settings.twilioTollFreeNumber) {
+      return salon.settings.twilioTollFreeNumber;
+    }
+  } catch (err) {
+    console.error('Error fetching salon Twilio settings:', err.message);
+  }
+  return process.env.TWILIO_PHONE_NUMBER;
+}
 
 function normalizePhone(p) {
   if (!p) return '';
@@ -69,9 +82,10 @@ async function sendBookingConfirmation({ to, clientName, serviceName, barberName
   }
 
   try {
+    const sender = await getSenderNumber();
     const result = await twilioClient.messages.create({
       body: message,
-      from: process.env.TWILIO_PHONE_NUMBER,
+      from: sender,
       to: normalizedTo,
     });
 
@@ -93,9 +107,10 @@ async function sendSMS({ to, body }) {
   }
 
   try {
+    const sender = await getSenderNumber();
     const result = await twilioClient.messages.create({
       body: body,
-      from: process.env.TWILIO_PHONE_NUMBER,
+      from: sender,
       to: normalizedTo,
     });
 

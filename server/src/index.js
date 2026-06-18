@@ -24,6 +24,8 @@ app.use('/api/appointments', require('./routes/appointments'));
 app.use('/api/clients', require('./routes/clients'));
 app.use('/api', require('./routes/catalog'));
 app.use('/api/upload', require('./routes/upload'));
+app.use('/api/copilot', require('./routes/copilot'));
+app.use('/api/reports', require('./routes/reports'));
 
 // Health check
 app.get('/api/health', (req, res) => {
