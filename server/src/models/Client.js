@@ -4,7 +4,23 @@ const clientSchema = new mongoose.Schema({
   salonId: { type: mongoose.Schema.Types.ObjectId, ref: 'Salon', required: true, index: true },
   firstName: { type: String, required: true },
   lastName: { type: String, default: '' },
-  phone: { type: String, required: true }, // E.164 format
+  phone: {
+    type: String,
+    required: true,
+    validate: {
+      validator: function(v) {
+        const e164Regex = /^\+[1-9]\d{7,14}$/;
+        if (!e164Regex.test(v)) return false;
+        if (v.startsWith('+1')) {
+          if (v.length !== 12) return false;
+          const areaFirst = v.charAt(2);
+          if (areaFirst === '0' || areaFirst === '1') return false;
+        }
+        return true;
+      },
+      message: props => `${props.value} is not a valid E.164 phone number!`
+    }
+  },
   email: { type: String, default: '' },
   notes: { type: String, default: '' },
   allergies: { type: String, default: '' },

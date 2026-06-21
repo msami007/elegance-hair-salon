@@ -69,14 +69,27 @@ export const deleteService = (id) => api.delete(`/services/${id}`).then(r => r.d
 // ── Admin Client CRUD ──
 export const createClient = (data) => api.post('/clients', data).then(r => r.data);
 export const updateClient = (id, data) => api.patch(`/clients/${id}`, data).then(r => r.data);
+export const mergeClients = (sourceId, targetId, salonId) => api.post('/clients/merge', { sourceId, targetId, salonId }).then(r => r.data);
+export const bulkImportClients = (clients, salonId, dedupeStrategy) => api.post('/clients/bulk-import', { clients, salonId, dedupeStrategy }).then(r => r.data);
 
 // ── Salon Settings ──
 export const updateSalonSettings = (id, settings) => api.patch(`/salon/${id}/settings`, settings).then(r => r.data);
 
 // ── AI Copilot ──
-export const sendCopilotMessage = (message, salonId) => api.post('/copilot/chat', { message, salonId }).then(r => r.data);
+export const sendCopilotMessage = (message, salonId, clientDate, history) => api.post('/copilot/chat', { message, salonId, clientDate, history }).then(r => r.data);
 
 // ── Admin Reports ──
 export const getBarberPerformanceReport = (salonId) => api.get('/reports/barber-performance', { params: { salonId } }).then(r => r.data);
+
+// ── Outreach Cadences ──
+export const getCadences = (salonId) => api.get('/cadences', { params: { salonId } }).then(r => r.data);
+export const createCadence = (data) => api.post('/cadences', data).then(r => r.data);
+export const updateCadence = (id, data) => api.patch(`/cadences/${id}`, data).then(r => r.data);
+export const deleteCadence = (id) => api.delete(`/cadences/${id}`).then(r => r.data);
+export const getCadenceEnrollments = (cadenceId) => api.get(`/cadences/${cadenceId}/enrollments`).then(r => r.data);
+
+// ── AI Voice Agent ──
+export const getCallLogs = (salonId) => api.get('/voice/logs', { params: { salonId } }).then(r => r.data);
+export const triggerVoiceCall = (data) => api.post('/voice/call', data).then(r => r.data);
 
 export default api;

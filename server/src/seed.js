@@ -11,6 +11,8 @@ const Barber = require('./models/Barber');
 const Service = require('./models/Service');
 const Client = require('./models/Client');
 const Appointment = require('./models/Appointment');
+const Cadence = require('./models/Cadence');
+const CadenceEnrollment = require('./models/CadenceEnrollment');
 const dayjs = require('dayjs');
 
 async function seed() {
@@ -21,6 +23,7 @@ async function seed() {
   await Promise.all([
     Salon.deleteMany({}), Location.deleteMany({}), Barber.deleteMany({}),
     Service.deleteMany({}), Client.deleteMany({}), Appointment.deleteMany({}),
+    Cadence.deleteMany({}), CadenceEnrollment.deleteMany({}),
   ]);
   console.log('Cleared existing data');
 
@@ -62,6 +65,7 @@ async function seed() {
     salonId: salon._id, locationId: evanston._id,
     name: 'Lucky', title: 'Master Barber', role: 'owner',
     phone: '+17084005589', email: '1704elegance@gmail.com',
+    photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80',
     bio: 'Owner and master barber with over 15 years of experience. Specializes in classic cuts, fades, and beard grooming.',
     specialisms: ['classic', 'fade', 'skin-fade', 'beard', 'textured', 'buzz'],
   });
@@ -70,6 +74,7 @@ async function seed() {
     salonId: salon._id, locationId: evanston._id,
     name: 'Oskar', title: 'Master Hairdresser', role: 'staffer',
     phone: '+17087173210', email: 'askarsaleh1973@icloud.com',
+    photo: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=300&auto=format&fit=crop&q=80',
     bio: 'Master hairdresser with expertise in color, styling, and women\'s cuts. Known for precision and artistry.',
     specialisms: ['color', 'highlights', 'balayage', 'styling', 'blowout', 'curly', 'extensions'],
   });
@@ -78,6 +83,7 @@ async function seed() {
     salonId: salon._id, locationId: evanston._id,
     name: 'Shamiram', title: 'Master Hairstylist', role: 'basic_staffer',
     phone: '+18478771078', email: 'shamiram1991@yahoo.com',
+    photo: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&auto=format&fit=crop&q=80',
     bio: 'Master hairstylist specializing in color techniques, smoothing treatments, and formal styling.',
     specialisms: ['color', 'keratin', 'smoothing', 'perm', 'styling', 'updo', 'highlights', 'balayage'],
   });
@@ -86,6 +92,7 @@ async function seed() {
     salonId: salon._id, locationId: evanston._id,
     name: 'Ahmad', title: 'Skin Fade Specialist', role: 'basic_staffer',
     phone: '+12243823301', email: 'oskarahmad33@gmail.com',
+    photo: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=300&auto=format&fit=crop&q=80',
     bio: 'Skin fade specialist with sharp precision in fades, lineups, and modern men\'s styles.',
     specialisms: ['skin-fade', 'fade', 'beard', 'textured', 'lineup', 'buzz'],
   });
@@ -95,6 +102,7 @@ async function seed() {
     salonId: salon._id, locationId: chicago._id,
     name: 'Marcus', title: 'Senior Barber', role: 'staffer',
     phone: '+13125552001', email: 'marcus.chicago@elegance.com',
+    photo: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=300&auto=format&fit=crop&q=80',
     bio: 'Senior Chicago barber specializing in modern skin fades, custom beard line-ups, and classic hot towel shaves.',
     specialisms: ['skin-fade', 'fade', 'beard', 'classic', 'buzz', 'lineup'],
   });
@@ -103,6 +111,7 @@ async function seed() {
     salonId: salon._id, locationId: chicago._id,
     name: 'Elena', title: 'Lead Hairstylist', role: 'staffer',
     phone: '+13125552002', email: 'elena.chicago@elegance.com',
+    photo: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&auto=format&fit=crop&q=80',
     bio: 'Lead Chicago stylist with expertise in color, highlights, balayage, keratin treatments, and custom styles.',
     specialisms: ['color', 'highlights', 'balayage', 'styling', 'blowout', 'keratin', 'smoothing'],
   });
@@ -229,6 +238,41 @@ async function seed() {
   console.log(`\n   Salon ID: ${salon._id}`);
   console.log(`   Evanston Location ID: ${evanston._id}`);
   console.log(`   Chicago Location ID: ${chicago._id}`);
+
+  // ── Default Pre-Appointment Cadence ──
+  const cadence = await Cadence.create({
+    salonId: salon._id,
+    name: 'Pre-Appointment Reminders',
+    type: 'pre-appointment',
+    isActive: true,
+    steps: [
+      {
+        order: 1,
+        channel: 'sms',
+        delayValue: 48,
+        delayUnit: 'hours',
+        delayDirection: 'before',
+        messageTemplate: 'Hi {{firstName}}, this is a friendly reminder from Elegance Salon. You have an appointment for {{serviceName}} with {{barberName}} on {{date}} at {{time}}. We look forward to seeing you!',
+      },
+      {
+        order: 2,
+        channel: 'sms',
+        delayValue: 24,
+        delayUnit: 'hours',
+        delayDirection: 'before',
+        messageTemplate: 'Hi {{firstName}}, your {{serviceName}} appointment with {{barberName}} is tomorrow at {{time}}. Reply YES to confirm or call us to reschedule. Reply STOP to opt out.',
+      },
+      {
+        order: 3,
+        channel: 'sms',
+        delayValue: 2,
+        delayUnit: 'hours',
+        delayDirection: 'before',
+        messageTemplate: 'Hi {{firstName}}, just a heads up — your appointment at Elegance Salon ({{locationName}}) is in 2 hours at {{time}}. See you soon!',
+      },
+    ],
+  });
+  console.log(`   Cadence: "${cadence.name}" (${cadence.steps.length} steps)`);
 
   await mongoose.disconnect();
 }

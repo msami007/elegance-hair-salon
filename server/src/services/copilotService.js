@@ -8,20 +8,28 @@ const Salon = require('../models/Salon');
 const { sendSMS } = require('./twilio');
 const dayjs = require('dayjs');
 
-// Initialize OpenAI client
-const apiKey = process.env.OPENAI_API_KEY;
-let openai = null;
-if (apiKey && apiKey !== 'YOUR_OPENAI_API_KEY') {
-  openai = new OpenAI({ apiKey });
+let openaiClientInstance = null;
+
+// Initialize OpenAI client dynamically
+function getOpenAIClient() {
+  const currentKey = process.env.OPENAI_API_KEY;
+  if (currentKey && currentKey !== 'YOUR_OPENAI_API_KEY' && currentKey.trim() !== '') {
+    if (!openaiClientInstance || openaiClientInstance.apiKey !== currentKey) {
+      openaiClientInstance = new OpenAI({ apiKey: currentKey });
+    }
+    return openaiClientInstance;
+  }
+  return null;
 }
 
 /**
  * DB Query: Find Appointments
  */
-async function queryAppointments({ startDate, endDate, barberId, salonId }) {
+async function queryAppointments({ startDate, endDate, barberId, salonId, clientId, searchQuery }) {
   const filter = {};
   if (salonId) filter.salonId = new mongoose.Types.ObjectId(salonId);
   if (barberId) filter.barberId = new mongoose.Types.ObjectId(barberId);
+  if (clientId) filter.clientId = new mongoose.Types.ObjectId(clientId);
   
   if (startDate || endDate) {
     filter.date = {};
@@ -29,21 +37,31 @@ async function queryAppointments({ startDate, endDate, barberId, salonId }) {
     if (endDate) filter.date.$lte = endDate;
   }
 
-  const appointments = await Appointment.find(filter)
+  let appointments = await Appointment.find(filter)
+    .populate('clientId', 'firstName lastName phone')
     .populate('barberId', 'name')
     .populate('serviceId', 'name price')
-    .sort({ date: 1, time: 1 })
+    .sort({ date: 1, startTime: 1 })
     .lean();
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    appointments = appointments.filter(app => {
+      const name = app.clientId ? `${app.clientId.firstName || ''} ${app.clientId.lastName || ''}`.toLowerCase() : '';
+      const phone = app.clientId?.phone || '';
+      return name.includes(q) || phone.includes(q);
+    });
+  }
 
   return appointments.map(app => ({
     id: app._id,
-    clientName: `${app.firstName} ${app.lastName}`,
-    phone: app.phone,
+    clientName: app.clientId ? `${app.clientId.firstName || ''} ${app.clientId.lastName || ''}`.trim() : 'Client',
+    phone: app.clientId?.phone || '',
     barber: app.barberId?.name || 'Any',
     service: app.serviceId?.name || 'Service',
     price: app.serviceId ? (app.serviceId.price / 100).toFixed(2) : '0.00',
     date: app.date,
-    time: app.time,
+    time: app.startTime || app.time || '',
     status: app.status
   }));
 }
@@ -73,11 +91,26 @@ async function queryClients({ searchQuery, salonId }) {
   if (salonId) filter.salonId = new mongoose.Types.ObjectId(salonId);
 
   if (searchQuery) {
-    filter.$or = [
-      { firstName: { $regex: searchQuery, $options: 'i' } },
-      { lastName: { $regex: searchQuery, $options: 'i' } },
-      { phone: { $regex: searchQuery, $options: 'i' } }
-    ];
+    const parts = searchQuery.trim().split(/\s+/);
+    if (parts.length > 1) {
+      filter.$or = [
+        {
+          $and: [
+            { firstName: { $regex: parts[0], $options: 'i' } },
+            { lastName: { $regex: parts[1], $options: 'i' } }
+          ]
+        },
+        { firstName: { $regex: searchQuery, $options: 'i' } },
+        { lastName: { $regex: searchQuery, $options: 'i' } },
+        { phone: { $regex: searchQuery, $options: 'i' } }
+      ];
+    } else {
+      filter.$or = [
+        { firstName: { $regex: searchQuery, $options: 'i' } },
+        { lastName: { $regex: searchQuery, $options: 'i' } },
+        { phone: { $regex: searchQuery, $options: 'i' } }
+      ];
+    }
   }
 
   const clients = await Client.find(filter).sort({ visitCount: -1 }).limit(20).lean();
@@ -118,6 +151,61 @@ async function queryInactiveClients({ daysThreshold = 90, salonId }) {
 }
 
 /**
+ * DB Query: Calculate Barber Retention Performance
+ */
+async function calculateBarberPerformance(salonId) {
+  const barbers = await Barber.find({ salonId }).lean();
+  const appointments = await Appointment.find({ salonId }).lean();
+
+  const barberStats = {};
+  barbers.forEach(b => {
+    barberStats[b._id.toString()] = {
+      name: b.name,
+      title: b.title,
+      uniqueClientsMap: new Map()
+    };
+  });
+
+  appointments.forEach(appt => {
+    const bId = appt.barberId?.toString();
+    if (!bId || !barberStats[bId]) return;
+
+    if (appt.status === 'completed' || appt.status === 'confirmed') {
+      const cId = appt.clientId?.toString();
+      if (cId) {
+        const stats = barberStats[bId];
+        stats.uniqueClientsMap.set(cId, (stats.uniqueClientsMap.get(cId) || 0) + 1);
+      }
+    }
+  });
+
+  const performance = Object.values(barberStats).map(stats => {
+    const uniqueClientsCount = stats.uniqueClientsMap.size;
+    let repeatClientsCount = 0;
+    stats.uniqueClientsMap.forEach((count) => {
+      if (count >= 2) repeatClientsCount++;
+    });
+
+    const returnRate = uniqueClientsCount > 0
+      ? Math.round((repeatClientsCount / uniqueClientsCount) * 100)
+      : 0;
+
+    return {
+      name: stats.name,
+      title: stats.title,
+      uniqueClientsCount,
+      repeatClientsCount,
+      returnRate
+    };
+  });
+
+  // Sort by returnRate descending, then uniqueClientsCount descending
+  performance.sort((a, b) => b.returnRate - a.returnRate || b.uniqueClientsCount - a.uniqueClientsCount);
+
+  return performance;
+}
+
+/**
  * Twilio Action: Send SMS reminders
  */
 async function sendReminderSMS({ appointmentIds }) {
@@ -126,20 +214,27 @@ async function sendReminderSMS({ appointmentIds }) {
 
   for (const id of appointmentIds) {
     try {
-      const app = await Appointment.findById(id).populate('serviceId', 'name');
+      const app = await Appointment.findById(id)
+        .populate('clientId', 'firstName lastName phone')
+        .populate('serviceId', 'name');
       if (!app) continue;
 
-      const message = `Elegance Salon Reminder: Hi ${app.firstName}, you have an appointment for ${app.serviceId?.name || 'haircut'} tomorrow at ${app.time}. Confirm by replying YES.`;
+      const clientName = app.clientId?.firstName || 'Client';
+      const clientPhone = app.clientId?.phone || '';
+      const clientFullName = app.clientId ? `${app.clientId.firstName || ''} ${app.clientId.lastName || ''}`.trim() : 'Client';
+      const appTime = app.startTime || app.time || '';
+
+      const message = `Elegance Salon Reminder: Hi ${clientName}, you have an appointment for ${app.serviceId?.name || 'haircut'} tomorrow at ${appTime}. Confirm by replying YES.`;
       
-      const twilioRes = await sendSMS({ to: app.phone, body: message });
+      const twilioRes = await sendSMS({ to: clientPhone, body: message });
       if (twilioRes.success) {
         count++;
         app.status = 'need-confirm';
         app.notes = (app.notes ? app.notes + '\n' : '') + `[${dayjs().format('YYYY-MM-DD HH:mm')}] Sent automated Copilot reminder SMS`;
         await app.save();
-        logs.push({ id, client: `${app.firstName} ${app.lastName}`, status: 'sent' });
+        logs.push({ id, client: clientFullName, status: 'sent' });
       } else {
-        logs.push({ id, client: `${app.firstName} ${app.lastName}`, status: 'failed', error: twilioRes.error });
+        logs.push({ id, client: clientFullName, status: 'failed', error: twilioRes.error });
       }
     } catch (err) {
       logs.push({ id, error: err.message });
@@ -184,14 +279,161 @@ async function sendBulkPromoSMS({ clientIds, promoMessage }) {
 }
 
 /**
+ * DB Action: Cancel Appointment and send cancellation SMS
+ */
+async function cancelAppointment({ appointmentId }) {
+  try {
+    const app = await Appointment.findById(appointmentId)
+      .populate('clientId')
+      .populate('barberId')
+      .populate('serviceId');
+
+    if (!app) {
+      return { success: false, error: 'Appointment not found' };
+    }
+
+    app.status = 'cancelled';
+    app.notes = (app.notes ? app.notes + '\n' : '') + `[${dayjs().format('YYYY-MM-DD HH:mm')}] Cancelled by Elegance Copilot`;
+    await app.save();
+
+    try {
+      const { cancelEnrollment } = require('./cadenceService');
+      await cancelEnrollment(appointmentId);
+    } catch (e) {
+      console.error('[Copilot] Failed to cancel cadence enrollment:', e.message);
+    }
+
+    const clientName = app.clientId?.firstName || 'Client';
+    const clientPhone = app.clientId?.phone || '';
+    const serviceName = app.serviceId?.name || 'haircut';
+    const appTime = app.startTime || app.time || '';
+    const appDate = app.date || '';
+
+    const clientFullName = app.clientId ? `${app.clientId.firstName || ''} ${app.clientId.lastName || ''}`.trim() : 'Client';
+    const message = `Elegance Salon Cancellation: Hi ${clientName}, your appointment for ${serviceName} on ${appDate} at ${appTime} has been cancelled.`;
+
+    let smsSent = false;
+    let smsError = null;
+
+    if (clientPhone) {
+      const twilioRes = await sendSMS({ to: clientPhone, body: message });
+      smsSent = twilioRes.success;
+      smsError = twilioRes.error;
+    }
+
+    return {
+      success: true,
+      appointmentId,
+      clientName: clientFullName,
+      smsSent,
+      smsError
+    };
+  } catch (err) {
+    console.error('[Copilot] Error in cancelAppointment:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Fallback Parser: Regex-based natural language execution
  */
-async function processCommandFallback(message, salonId) {
+async function processCommandFallback(message, salonId, clientDate) {
   const text = message.toLowerCase();
-  const todayStr = dayjs().format('YYYY-MM-DD');
-  const tomorrowStr = dayjs().add(1, 'day').format('YYYY-MM-DD');
+  const baseDate = clientDate ? dayjs(clientDate) : dayjs();
+  const todayStr = baseDate.format('YYYY-MM-DD');
+  const tomorrowStr = baseDate.add(1, 'day').format('YYYY-MM-DD');
 
-  // 1. Send reminders to tomorrow's appointments
+  // 1. Cancel appointment
+  if (text.includes('cancel') || text.includes('delete') || text.includes('remove')) {
+    const todayApps = await queryAppointments({ startDate: todayStr, endDate: todayStr, salonId });
+    const tomorrowApps = await queryAppointments({ startDate: tomorrowStr, endDate: tomorrowStr, salonId });
+    const allApps = [...todayApps, ...tomorrowApps];
+
+    let targetApp = null;
+
+    for (const app of allApps) {
+      if (app.status === 'cancelled') continue;
+      const nameParts = app.clientName.toLowerCase().split(' ');
+      const isNameMentioned = nameParts.some(part => part && part.length > 2 && text.includes(part));
+      
+      let isTimeMatch = false;
+      const appTime = app.time.toLowerCase();
+      
+      if (text.includes('1 pm') || text.includes('1pm') || text.includes('1:00') || text.includes('13:00')) {
+        if (appTime.includes('13:00') || appTime.startsWith('13:') || appTime.startsWith('01:') || appTime.includes('1:00')) isTimeMatch = true;
+      } else if (text.includes('2 pm') || text.includes('2pm') || text.includes('2:00') || text.includes('14:00')) {
+        if (appTime.includes('14:00') || appTime.startsWith('14:') || appTime.startsWith('02:') || appTime.includes('2:00')) isTimeMatch = true;
+      } else if (text.includes('3 pm') || text.includes('3pm') || text.includes('3:00') || text.includes('15:00')) {
+        if (appTime.includes('15:00') || appTime.startsWith('15:') || appTime.startsWith('03:') || appTime.includes('3:00')) isTimeMatch = true;
+      } else if (text.includes('4 pm') || text.includes('4pm') || text.includes('4:00') || text.includes('16:00')) {
+        if (appTime.includes('16:00') || appTime.startsWith('16:') || appTime.startsWith('04:') || appTime.includes('4:00')) isTimeMatch = true;
+      } else if (text.includes('5 pm') || text.includes('5pm') || text.includes('5:00') || text.includes('17:00')) {
+        if (appTime.includes('17:00') || appTime.startsWith('17:') || appTime.startsWith('05:') || appTime.includes('5:00')) isTimeMatch = true;
+      } else if (text.includes('12 pm') || text.includes('12pm') || text.includes('12:00')) {
+        if (appTime.includes('12:00') || appTime.startsWith('12:')) isTimeMatch = true;
+      } else if (text.includes('11 am') || text.includes('11am') || text.includes('11:00')) {
+        if (appTime.includes('11:00') || appTime.startsWith('11:')) isTimeMatch = true;
+      } else if (text.includes('10 am') || text.includes('10am') || text.includes('10:00')) {
+        if (appTime.includes('10:00') || appTime.startsWith('10:')) isTimeMatch = true;
+      } else if (text.includes('9 am') || text.includes('9am') || text.includes('9:00')) {
+        if (appTime.includes('09:00') || appTime.startsWith('09:') || appTime.startsWith('9:')) isTimeMatch = true;
+      }
+
+      if (isNameMentioned && isTimeMatch) {
+        targetApp = app;
+        break;
+      }
+    }
+
+    if (!targetApp) {
+      for (const app of allApps) {
+        if (app.status === 'cancelled') continue;
+        const nameParts = app.clientName.toLowerCase().split(' ');
+        const isNameMentioned = nameParts.some(part => part && part.length > 2 && text.includes(part));
+        if (isNameMentioned) {
+          targetApp = app;
+          break;
+        }
+      }
+    }
+
+    if (!targetApp) {
+      for (const app of allApps) {
+        if (app.status === 'cancelled') continue;
+        let isTimeMatch = false;
+        const appTime = app.time.toLowerCase();
+        if (text.includes('1 pm') || text.includes('1pm') || text.includes('1:00') || text.includes('13:00')) {
+          if (appTime.includes('13:00') || appTime.startsWith('13:') || appTime.startsWith('01:') || appTime.includes('1:00')) isTimeMatch = true;
+        }
+        if (isTimeMatch) {
+          targetApp = app;
+          break;
+        }
+      }
+    }
+
+    if (targetApp) {
+      const cancelRes = await cancelAppointment({ appointmentId: targetApp.id.toString() });
+      if (cancelRes.success) {
+        return {
+          response: `I found an appointment for ${targetApp.clientName} on ${targetApp.date} at ${targetApp.time} and have successfully cancelled it. A cancellation text has been sent to the client.`,
+          actions: [{ type: 'cancel_appointment', appointmentId: targetApp.id.toString(), clientName: targetApp.clientName, smsSent: cancelRes.smsSent }]
+        };
+      } else {
+        return {
+          response: `I found the appointment for ${targetApp.clientName} on ${targetApp.date} at ${targetApp.time}, but failed to cancel it: ${cancelRes.error}`,
+          actions: []
+        };
+      }
+    }
+
+    return {
+      response: `I could not find a matching active appointment to cancel. Please specify the client's name or the time of the appointment.`,
+      actions: []
+    };
+  }
+
+  // 2. Send reminders to tomorrow's appointments
   if (text.includes('send') && text.includes('reminder') && (text.includes('tomorrow') || text.includes('next day'))) {
     const apps = await Appointment.find({
       salonId: new mongoose.Types.ObjectId(salonId),
@@ -297,7 +539,20 @@ async function processCommandFallback(message, salonId) {
     }
   }
 
-  // 7. Which barber is booked the most / popular barber
+  // 7. Barber retention / return rate
+  if (text.includes('retention') || text.includes('return rate') || text.includes('repeat client')) {
+    const performance = await calculateBarberPerformance(salonId);
+    if (!performance.length) {
+      return { response: `I could not find any barber performance or client data to calculate retention rates.`, actions: [] };
+    }
+    const listText = performance.map(p => `- **${p.name}** (${p.title}): **${p.returnRate}%** return rate (${p.repeatClientsCount} repeat clients out of ${p.uniqueClientsCount} unique clients)`).join('\n');
+    return {
+      response: `Here is the current barber retention rate (return rate) leaderboard:\n\n${listText}\n\n**${performance[0]?.name}** has the highest retention rate!`,
+      actions: []
+    };
+  }
+
+  // 8. Which barber is booked the most / popular barber
   if (text.includes('barber') && (text.includes('popular') || text.includes('booked') || text.includes('highest'))) {
     const barbers = await Barber.find({ salonId, isActive: true }).lean();
     const stats = [];
@@ -313,10 +568,13 @@ async function processCommandFallback(message, salonId) {
     };
   }
 
-  // 8. General Info Fallback
+
+
+  // 10. General Info Fallback
   return {
     response: `I am your Elegance Copilot. I can search database records and schedule events. Here are some examples of what you can ask me to do:\n\n` +
       `- "How many appointments do we have tomorrow?"\n` +
+      `- "Which barber has the highest retention rate?"\n` +
       `- "Which barber is booked the most?"\n` +
       `- "Check how many times John Doe has visited"\n` +
       `- "Which clients are slip-aways?"\n` +
@@ -329,41 +587,58 @@ async function processCommandFallback(message, salonId) {
 /**
  * Main Controller Entrypoint
  */
-async function processCommand(message, salonId) {
-  if (!openai) {
+async function processCommand(message, salonId, clientDate, history) {
+  const activeOpenai = getOpenAIClient();
+  if (!activeOpenai) {
     console.log('[Copilot] Running in mock parser mode (No OpenAI Key)');
-    return processCommandFallback(message, salonId);
+    return processCommandFallback(message, salonId, clientDate);
   }
 
   try {
+    const baseDate = clientDate ? dayjs(clientDate) : dayjs();
     const messages = [
       {
         role: 'system',
         content: `You are Elegance Copilot, an AI operations manager for Elegance Hair Salon & Barbershop.
 You sit directly on top of the salon's database. You have permissions to query database collections (appointments, barbers, clients, services) and trigger Twilio SMS notifications.
-The current date is ${dayjs().format('YYYY-MM-DD')}. Tomorrow is ${dayjs().add(1, 'day').format('YYYY-MM-DD')}.
+The current date is ${baseDate.format('YYYY-MM-DD')}. Tomorrow is ${baseDate.add(1, 'day').format('YYYY-MM-DD')}.
 
 Guidelines:
 1. Always be professional, concise, and do not use emojis.
 2. If the user asks a question, call the appropriate database queries to fetch facts, then summarize clearly.
 3. If the user asks to "send reminders" or "send marketing/promo messages", resolve the list of clients/appointments first, and call the corresponding action tools (e.g. send_reminder_sms or send_bulk_promo_sms). Always summarize exactly how many messages were sent.
 4. Keep prices formatted nicely (divide cents by 100).`
-      },
-      { role: 'user', content: message }
+      }
     ];
+
+    // Append history messages
+    if (Array.isArray(history)) {
+      history.forEach(chat => {
+        if (chat.sender === 'user') {
+          messages.push({ role: 'user', content: chat.text });
+        } else if (chat.sender === 'bot') {
+          messages.push({ role: 'assistant', content: chat.text });
+        }
+      });
+    }
+
+    // Append current user message
+    messages.push({ role: 'user', content: message });
 
     const tools = [
       {
         type: 'function',
         function: {
           name: 'query_appointments',
-          description: 'Fetch appointments within a date range.',
+          description: 'Fetch appointments within a date range and optionally filter by barber, client ID, or search client name/phone.',
           parameters: {
             type: 'object',
             properties: {
               startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
               endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
-              barberId: { type: 'string', description: 'Filter by barber MongoDB ObjectId (optional)' }
+              barberId: { type: 'string', description: 'Filter by barber MongoDB ObjectId (optional)' },
+              clientId: { type: 'string', description: 'Filter by client MongoDB ObjectId (optional)' },
+              searchQuery: { type: 'string', description: 'Search term for client name or phone (optional)' }
             }
           }
         }
@@ -373,6 +648,14 @@ Guidelines:
         function: {
           name: 'query_barbers',
           description: 'Fetch all active barbers at the salon.',
+          parameters: { type: 'object', properties: {} }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'query_barber_performance',
+          description: 'Fetch barber performance metrics including unique clients count, repeat clients count, and return rate retention percentage.',
           parameters: { type: 'object', properties: {} }
         }
       },
@@ -441,70 +724,111 @@ Guidelines:
             required: ['clientIds', 'promoMessage']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'cancel_appointment',
+          description: 'Cancel a scheduled appointment and send a cancellation SMS to the client.',
+          parameters: {
+            type: 'object',
+            properties: {
+              appointmentId: { type: 'string', description: 'The MongoDB ObjectId of the appointment to cancel.' }
+            },
+            required: ['appointmentId']
+          }
+        }
       }
     ];
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages,
-      tools,
-      tool_choice: 'auto'
-    });
-
-    const responseMessage = response.choices[0].message;
-    const toolCalls = responseMessage.tool_calls;
-
-    if (!toolCalls) {
-      return { response: responseMessage.content, actions: [] };
-    }
-
-    // Process tool calls
     const executedActions = [];
-    messages.push(responseMessage);
+    let loopCount = 0;
+    const maxLoops = 5;
 
-    for (const toolCall of toolCalls) {
-      const functionName = toolCall.function.name;
-      const functionArgs = JSON.parse(toolCall.function.arguments);
-      let result = null;
+    while (loopCount < maxLoops) {
+      const response = await activeOpenai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages,
+        tools,
+        tool_choice: 'auto'
+      });
 
-      if (functionName === 'query_appointments') {
-        result = await queryAppointments({ ...functionArgs, salonId });
-      } else if (functionName === 'query_barbers') {
-        result = await queryBarbers({ salonId });
-      } else if (functionName === 'query_clients') {
-        result = await queryClients({ ...functionArgs, salonId });
-      } else if (functionName === 'query_inactive_clients') {
-        result = await queryInactiveClients({ ...functionArgs, salonId });
-      } else if (functionName === 'send_reminder_sms') {
-        result = await sendReminderSMS(functionArgs);
-        executedActions.push({ type: 'send_reminder_sms', count: result.count, details: result.details });
-      } else if (functionName === 'send_bulk_promo_sms') {
-        result = await sendBulkPromoSMS(functionArgs);
-        executedActions.push({ type: 'send_bulk_promo_sms', count: result.count, details: result.details });
+      const responseMessage = response.choices[0].message;
+      console.log('[Copilot DEBUG] Assistant Message:', JSON.stringify(responseMessage, null, 2));
+      messages.push(responseMessage);
+
+      const toolCalls = responseMessage.tool_calls;
+      if (!toolCalls || toolCalls.length === 0) {
+        return {
+          response: responseMessage.content,
+          actions: executedActions
+        };
       }
 
-      messages.push({
-        tool_call_id: toolCall.id,
-        role: 'tool',
-        name: functionName,
-        content: JSON.stringify(result)
-      });
+      console.log('[Copilot DEBUG] Tool Calls:', JSON.stringify(toolCalls, null, 2));
+
+      for (const toolCall of toolCalls) {
+        const functionName = toolCall.function.name;
+        const functionArgs = JSON.parse(toolCall.function.arguments);
+        let result = null;
+
+        if (functionName === 'query_appointments') {
+          result = await queryAppointments({ ...functionArgs, salonId });
+        } else if (functionName === 'query_barbers') {
+          result = await queryBarbers({ salonId });
+        } else if (functionName === 'query_barber_performance') {
+          result = await calculateBarberPerformance(salonId);
+        } else if (functionName === 'query_clients') {
+          result = await queryClients({ ...functionArgs, salonId });
+        } else if (functionName === 'query_inactive_clients') {
+          result = await queryInactiveClients({ ...functionArgs, salonId });
+        } else if (functionName === 'send_reminder_sms') {
+          const salonObj = await Salon.findById(salonId);
+          if (!salonObj || !salonObj.settings || !salonObj.settings.aiActionPermissions) {
+            result = { success: false, error: 'Permission Denied: AI Copilot is not allowed to execute automated SMS campaigns directly. Please enable this permission in settings.' };
+          } else {
+            result = await sendReminderSMS(functionArgs);
+            executedActions.push({ type: 'send_reminder_sms', count: result.count, details: result.details });
+          }
+        } else if (functionName === 'send_bulk_promo_sms') {
+          const salonObj = await Salon.findById(salonId);
+          if (!salonObj || !salonObj.settings || !salonObj.settings.aiActionPermissions) {
+            result = { success: false, error: 'Permission Denied: AI Copilot is not allowed to execute automated SMS campaigns directly. Please enable this permission in settings.' };
+          } else {
+            result = await sendBulkPromoSMS(functionArgs);
+            executedActions.push({ type: 'send_bulk_promo_sms', count: result.count, details: result.details });
+          }
+        } else if (functionName === 'cancel_appointment') {
+          result = await cancelAppointment(functionArgs);
+          executedActions.push({
+            type: 'cancel_appointment',
+            appointmentId: result.appointmentId,
+            clientName: result.clientName,
+            smsSent: result.smsSent,
+            smsError: result.smsError
+          });
+        }
+
+        messages.push({
+          tool_call_id: toolCall.id,
+          role: 'tool',
+          name: functionName,
+          content: JSON.stringify(result)
+        });
+      }
+
+      loopCount++;
     }
 
-    // Call chat completion again to formulate response
-    const secondResponse = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages
-    });
-
+    const finalText = messages[messages.length - 1]?.content || 'Action executed successfully.';
     return {
-      response: secondResponse.choices[0].message.content,
+      response: finalText,
       actions: executedActions
     };
   } catch (error) {
-    console.error('[Copilot OpenAI Error]', error);
+    console.error('[Copilot OpenAI Error]', error.stack || error);
     // Fall back to regex parser in case of API failure or invalid key
-    return processCommandFallback(message, salonId);
+    return processCommandFallback(message, salonId, clientDate);
   }
 }
 

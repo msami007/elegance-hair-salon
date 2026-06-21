@@ -26,6 +26,8 @@ app.use('/api', require('./routes/catalog'));
 app.use('/api/upload', require('./routes/upload'));
 app.use('/api/copilot', require('./routes/copilot'));
 app.use('/api/reports', require('./routes/reports'));
+app.use('/api/cadences', require('./routes/cadences'));
+app.use('/api/voice', require('./routes/voice'));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -45,6 +47,11 @@ mongoose
   .connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('✅ Connected to MongoDB');
+
+    // Start the cadence scheduler
+    const { startCadenceScheduler } = require('./services/cadenceScheduler');
+    startCadenceScheduler();
+
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });

@@ -5,7 +5,7 @@ const { processCommand } = require('../services/copilotService');
 
 router.post('/chat', async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message, clientDate, history } = req.body;
     let { salonId } = req.body;
 
     if (!message) {
@@ -22,7 +22,7 @@ router.post('/chat', async (req, res) => {
       }
     }
 
-    const result = await processCommand(message, salonId);
+    const result = await processCommand(message, salonId, clientDate, history);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });

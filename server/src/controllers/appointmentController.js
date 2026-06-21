@@ -4,6 +4,7 @@ const Client = require('../models/Client');
 const Service = require('../models/Service');
 const { sendBookingConfirmation, normalizePhone } = require('../services/twilio');
 const { matchBarbers } = require('../services/matching');
+const { enrollAppointment, cancelEnrollment } = require('../services/cadenceService');
 const dayjs = require('dayjs');
 
 // GET /api/appointments?locationId=&date=&barberId=&weekStart=
@@ -175,6 +176,11 @@ exports.createAppointment = async (req, res) => {
       sms: smsResult,
       client: { _id: client._id, firstName: client.firstName, lastName: client.lastName },
     });
+
+    // 8. Auto-enroll in cadence (non-blocking)
+    enrollAppointment(appointment._id).catch(err =>
+      console.error('[Cadence] Auto-enroll error:', err.message)
+    );
   } catch (error) {
     console.error('Create appointment error:', error);
     res.status(500).json({ error: error.message });
@@ -211,6 +217,14 @@ exports.updateAppointment = async (req, res) => {
       .populate('locationId', 'name address');
 
     if (!updated) return res.status(404).json({ error: 'Appointment not found' });
+
+    // Cancel cadence enrollment if appointment is cancelled
+    if (status === 'cancelled') {
+      cancelEnrollment(req.params.id).catch(err =>
+        console.error('[Cadence] Cancel enrollment error:', err.message)
+      );
+    }
+
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -290,13 +304,15 @@ exports.getAvailability = async (req, res) => {
 // POST /api/appointments/match-barbers
 exports.matchBarbersForBooking = async (req, res) => {
   try {
-    const { locationId, haircutStyle, serviceCategory, date } = req.body;
+    const { locationId, haircutStyle, serviceCategory, date, time, serviceId } = req.body;
 
     const recommendations = await matchBarbers({
       locationId,
       haircutStyle,
       serviceCategory,
       date,
+      time,
+      serviceId,
     });
 
     res.json(recommendations);

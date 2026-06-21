@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getServices, getLocations, lookupClient, matchBarbers, getAvailability, createAppointment, getBarbers, uploadPhoto } from '../services/api';
+import { getServices, getLocations, lookupClient, matchBarbers, getAvailability, createAppointment, getBarbers, uploadPhoto, IMAGE_BASE } from '../services/api';
 import dayjs from 'dayjs';
 import './BookingPage.css';
 
@@ -15,24 +15,24 @@ const SERVICE_CATEGORIES = [
 ];
 
 const STYLE_OPTIONS = [
-  { key: 'skin-fade', label: 'Skin Fade' },
-  { key: 'fade', label: 'Classic Fade' },
-  { key: 'classic', label: 'Classic Cut' },
-  { key: 'textured', label: 'Textured' },
-  { key: 'buzz', label: 'Buzz Cut' },
-  { key: 'beard', label: 'Beard Trim' },
-  { key: 'lineup', label: 'Line Up' },
-  { key: 'styling', label: 'Styling' },
-  { key: 'blowout', label: 'Blowout' },
-  { key: 'curly', label: 'Curly Hair' },
-  { key: 'color', label: 'Color Work' },
-  { key: 'balayage', label: 'Balayage' },
-  { key: 'highlights', label: 'Highlights' },
-  { key: 'extensions', label: 'Extensions' },
-  { key: 'updo', label: 'Updo' },
-  { key: 'keratin', label: 'Keratin' },
-  { key: 'smoothing', label: 'Smoothing' },
-  { key: 'perm', label: 'Perm' },
+  { key: 'skin-fade', label: 'Skin Fade', image: 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?w=300&auto=format&fit=crop&q=80' },
+  { key: 'fade', label: 'Classic Fade', image: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=300&auto=format&fit=crop&q=80' },
+  { key: 'classic', label: 'Classic Cut', image: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=300&auto=format&fit=crop&q=80' },
+  { key: 'textured', label: 'Textured', image: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=300&auto=format&fit=crop&q=80' },
+  { key: 'buzz', label: 'Buzz Cut', image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300&auto=format&fit=crop&q=80' },
+  { key: 'beard', label: 'Beard Trim', image: 'https://images.unsplash.com/photo-1622286342621-4bd786c2447c?w=300&auto=format&fit=crop&q=80' },
+  { key: 'lineup', label: 'Line Up', image: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=300&auto=format&fit=crop&q=80' },
+  { key: 'styling', label: 'Styling', image: 'https://images.unsplash.com/photo-1562322140-8baeececf3df?w=300&auto=format&fit=crop&q=80' },
+  { key: 'blowout', label: 'Blowout', image: 'https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=300&auto=format&fit=crop&q=80' },
+  { key: 'curly', label: 'Curly Hair', image: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=300&auto=format&fit=crop&q=80' },
+  { key: 'color', label: 'Color Work', image: 'https://images.unsplash.com/photo-1605980776566-0486c3ac7617?w=300&auto=format&fit=crop&q=80' },
+  { key: 'balayage', label: 'Balayage', image: 'https://images.unsplash.com/photo-1492106087820-71f1a00d2b11?w=300&auto=format&fit=crop&q=80' },
+  { key: 'highlights', label: 'Highlights', image: 'https://images.unsplash.com/photo-1519699047748-de8e457a634e?w=300&auto=format&fit=crop&q=80' },
+  { key: 'extensions', label: 'Extensions', image: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=300&auto=format&fit=crop&q=80' },
+  { key: 'updo', label: 'Updo', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&auto=format&fit=crop&q=80' },
+  { key: 'keratin', label: 'Keratin', image: 'https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?w=300&auto=format&fit=crop&q=80' },
+  { key: 'smoothing', label: 'Smoothing', image: 'https://images.unsplash.com/photo-1580618672591-eb180b1a973f?w=300&auto=format&fit=crop&q=80' },
+  { key: 'perm', label: 'Perm', image: 'https://images.unsplash.com/photo-1595425970377-c9703cf48b6d?w=300&auto=format&fit=crop&q=80' },
 ];
 
 const STEPS = ['customer', 'service', 'style', 'datetime', 'barber', 'confirm'];
@@ -139,8 +139,10 @@ export default function BookingPage() {
       haircutStyle: selectedStyle,
       serviceCategory: selectedCategory,
       date: selectedDate,
+      time: selectedTime,
+      serviceId: selectedService?._id,
     }).then(setRecommendations).catch(console.error);
-  }, [step, selectedStyle, selectedLocation, selectedCategory, selectedDate]);
+  }, [step, selectedStyle, selectedLocation, selectedCategory, selectedDate, selectedTime, selectedService]);
 
   // Photo upload
   const handlePhotoUpload = async (e) => {
@@ -197,13 +199,34 @@ export default function BookingPage() {
     return normalized;
   }
 
+  const isValidE164 = (p) => {
+    if (!p) return false;
+    const normalized = normalizePhone(p);
+    const e164Regex = /^\+[1-9]\d{7,14}$/;
+    if (!e164Regex.test(normalized)) return false;
+    if (normalized.startsWith('+1')) {
+      if (normalized.length !== 12) return false;
+      const areaFirst = normalized.charAt(2);
+      if (areaFirst === '0' || areaFirst === '1') return false;
+    }
+    return true;
+  };
+
+  const isBarberAvailable = useCallback((barberId) => {
+    if (!barberId) return false;
+    const barberAvail = availability[barberId];
+    if (!barberAvail) return true; // fallback
+    const slot = barberAvail.slots?.find(s => s.startTime === selectedTime);
+    return slot ? slot.available : false;
+  }, [availability, selectedTime]);
+
   const canProceed = () => {
     switch (step) {
-      case 0: return phone.length >= 10 && firstName.length > 0;
+      case 0: return firstName.trim().length > 0 && isValidE164(phone);
       case 1: return selectedService !== null;
       case 2: return selectedStyle !== '';
       case 3: return selectedTime !== '';
-      case 4: return selectedBarber !== null;
+      case 4: return selectedBarber !== null && isBarberAvailable(selectedBarber._id);
       default: return false;
     }
   };
@@ -256,7 +279,7 @@ export default function BookingPage() {
       {step < 5 && (
         <div className="progress-bar">
           {STEPS.slice(0, 5).map((s, i) => (
-            <div key={s} className={`progress-step ${i <= step ? 'active' : ''} ${i < step ? 'completed' : ''}`}>
+            <div key={s} className={`progress-step ${i === step ? 'active' : ''} ${i < step ? 'completed' : ''}`}>
               <div className="progress-dot">{i < step ? '✓' : i + 1}</div>
               <span className="progress-label">{['You', 'Service', 'Style', 'Date & Time', 'Barber'][i]}</span>
             </div>
@@ -318,6 +341,11 @@ export default function BookingPage() {
                   </button>
                 )}
               </div>
+              {phone && !isValidE164(phone) && (
+                <small style={{ color: '#DC2626', marginTop: '4px', display: 'block' }}>
+                  Please enter a valid phone number (e.g. +13125550199 or 10 digits for US numbers).
+                </small>
+              )}
               {existingClient && (
                 <div className="client-found animate-slide-up">
                   <div>
@@ -416,6 +444,9 @@ export default function BookingPage() {
                 <button key={style.key}
                   className={`style-card ${selectedStyle === style.key ? 'selected' : ''}`}
                   onClick={() => setSelectedStyle(style.key)}>
+                  <div className="style-thumb-wrapper">
+                    <img src={style.image} alt={style.label} className="style-thumbnail" />
+                  </div>
                   <span className="style-label">{style.label}</span>
                 </button>
               ))}
@@ -492,12 +523,28 @@ export default function BookingPage() {
               <div className="recommendation-section">
                 <h3 className="rec-title">AI Recommendations</h3>
                 <div className="barber-cards">
-                  {recommendations.slice(0, 2).map((rec, i) => (
+                  {recommendations.slice(0, 3).map((rec, i) => (
                     <button key={rec._id}
-                      className={`barber-card recommended ${selectedBarber?._id === rec._id ? 'selected' : ''}`}
+                      className={`barber-card recommended ${!rec.isAvailable ? 'unavailable-card' : ''} ${selectedBarber?._id === rec._id ? 'selected' : ''}`}
                       onClick={() => setSelectedBarber(rec)}>
-                      {i === 0 && <div className="best-match-badge">Best Match</div>}
-                      <div className="barber-avatar">{rec.name[0]}</div>
+                      {i === 0 && rec.isAvailable && <div className="best-match-badge">Best Match</div>}
+                      {!rec.isAvailable && <div className="best-match-badge unavailable-badge">Booked</div>}
+                      
+                      {rec.matchScore !== undefined && (
+                        <div className={`match-score-badge ${rec.isAvailable ? '' : 'unavailable'}`}>
+                          {rec.matchScore}% Match
+                        </div>
+                      )}
+
+                      {rec.photo ? (
+                        <img
+                          src={rec.photo.startsWith('http') ? rec.photo : `${IMAGE_BASE}${rec.photo}`}
+                          alt={rec.name}
+                          className="barber-avatar-img"
+                        />
+                      ) : (
+                        <div className="barber-avatar">{rec.name[0]}</div>
+                      )}
                       <h4>{rec.name}</h4>
                       <p className="barber-title">{rec.title}</p>
                       <div className="match-reasons">
@@ -519,22 +566,44 @@ export default function BookingPage() {
             <div className="all-barbers-section">
               <h3>Or choose any barber</h3>
               <div className="barber-cards">
-                {allBarbers.map(b => (
-                  <button key={b._id}
-                    className={`barber-card ${selectedBarber?._id === b._id ? 'selected' : ''}`}
-                    onClick={() => setSelectedBarber(b)}>
-                    <div className="barber-avatar">{b.name[0]}</div>
-                    <h4>{b.name}</h4>
-                    <p className="barber-title">{b.title}</p>
-                    <div className="specialism-tags">
-                      {b.specialisms?.slice(0, 4).map(s => (
-                        <span key={s} className="spec-tag">{s.replace(/-/g, ' ')}</span>
-                      ))}
-                    </div>
-                  </button>
-                ))}
+                {allBarbers.map(b => {
+                  const isAvailable = isBarberAvailable(b._id);
+                  return (
+                    <button key={b._id}
+                      className={`barber-card ${!isAvailable ? 'unavailable-card' : ''} ${selectedBarber?._id === b._id ? 'selected' : ''}`}
+                      onClick={() => setSelectedBarber(b)}>
+                      {!isAvailable && <div className="best-match-badge unavailable-badge">Booked</div>}
+                      {b.photo ? (
+                        <img
+                          src={b.photo.startsWith('http') ? b.photo : `${IMAGE_BASE}${b.photo}`}
+                          alt={b.name}
+                          className="barber-avatar-img"
+                        />
+                      ) : (
+                        <div className="barber-avatar">{b.name[0]}</div>
+                      )}
+                      <h4>{b.name}</h4>
+                      <p className="barber-title">{b.title}</p>
+                      <div className="specialism-tags">
+                        {b.specialisms?.slice(0, 4).map(s => (
+                          <span key={s} className="spec-tag">{s.replace(/-/g, ' ')}</span>
+                        ))}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
+
+            {selectedBarber && !isBarberAvailable(selectedBarber._id) && (
+              <div className="booking-warning-box">
+                <div className="warning-icon">⚠️</div>
+                <div className="warning-content">
+                  <h4>{selectedBarber.name} is unavailable at {dayjs(`2024-01-01 ${selectedTime}`).format('h:mm A')}</h4>
+                  <p>Please select another barber or go back to choose a different time slot.</p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
