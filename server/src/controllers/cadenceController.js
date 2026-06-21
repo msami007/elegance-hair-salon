@@ -1,5 +1,7 @@
 const Cadence = require('../models/Cadence');
 const CadenceEnrollment = require('../models/CadenceEnrollment');
+const Client = require('../models/Client');
+const { enrollClients } = require('../services/cadenceService');
 
 // GET /api/cadences?salonId=
 exports.getCadences = async (req, res) => {
@@ -9,13 +11,11 @@ exports.getCadences = async (req, res) => {
 
     const cadences = await Cadence.find({ salonId }).sort({ createdAt: -1 }).lean();
 
-    // Attach enrollment stats to each cadence
     const enriched = await Promise.all(cadences.map(async (cadence) => {
       const totalEnrollments = await CadenceEnrollment.countDocuments({ cadenceId: cadence._id });
       const activeEnrollments = await CadenceEnrollment.countDocuments({ cadenceId: cadence._id, status: 'active' });
       const completedEnrollments = await CadenceEnrollment.countDocuments({ cadenceId: cadence._id, status: 'completed' });
 
-      // Count total messages sent across all enrollments
       const sentAgg = await CadenceEnrollment.aggregate([
         { $match: { cadenceId: cadence._id } },
         { $unwind: '$stepExecutions' },
@@ -45,7 +45,7 @@ exports.createCadence = async (req, res) => {
     const cadence = await Cadence.create({
       salonId,
       name,
-      type: type || 'pre-appointment',
+      type: type || 'marketing',
       isActive: true,
       steps: steps || [],
     });
@@ -82,7 +82,6 @@ exports.deleteCadence = async (req, res) => {
     const cadence = await Cadence.findByIdAndDelete(req.params.id);
     if (!cadence) return res.status(404).json({ error: 'Cadence not found' });
 
-    // Also clean up enrollments
     await CadenceEnrollment.deleteMany({ cadenceId: cadence._id });
 
     res.json({ success: true });
@@ -98,10 +97,37 @@ exports.getEnrollments = async (req, res) => {
       .populate('appointmentId', 'date startTime endTime status')
       .populate('clientId', 'firstName lastName phone')
       .sort({ createdAt: -1 })
-      .limit(50)
+      .limit(100)
       .lean();
 
     res.json(enrollments);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// POST /api/cadences/:id/enroll
+exports.bulkEnroll = async (req, res) => {
+  try {
+    const cadenceId = req.params.id;
+    const { clientIds = [], tag, salonId } = req.body;
+
+    if (!salonId) return res.status(400).json({ error: 'salonId required' });
+
+    let targetIds = [...clientIds];
+
+    if (tag) {
+      const tagged = await Client.find({ salonId, tags: tag }, '_id').lean();
+      const taggedIds = tagged.map(c => c._id.toString());
+      targetIds = [...new Set([...targetIds, ...taggedIds])];
+    }
+
+    if (targetIds.length === 0) {
+      return res.status(400).json({ error: 'No clients to enroll' });
+    }
+
+    const results = await enrollClients(cadenceId, targetIds, salonId);
+    res.json({ enrolled: results.length, total: targetIds.length, skipped: targetIds.length - results.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

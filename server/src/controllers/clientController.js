@@ -149,9 +149,7 @@ exports.getRetentionData = async (req, res) => {
       };
     });
 
-    const retentionClients = list
-      .filter(c => c.engagementStatus !== 'active')
-      .sort((a, b) => b.daysSinceLastVisit - a.daysSinceLastVisit);
+    const sortedClients = list.sort((a, b) => b.daysSinceLastVisit - a.daysSinceLastVisit);
 
     res.json({
       summary: {
@@ -161,7 +159,7 @@ exports.getRetentionData = async (req, res) => {
         dormantCount,
         retentionRate: clients.length > 0 ? Math.round((activeCount / clients.length) * 100) : 0,
       },
-      clients: retentionClients,
+      clients: sortedClients,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -401,6 +399,48 @@ exports.bulkImportClients = async (req, res) => {
         totalProcessed: clients.length
       }
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// GET /api/clients/tags?salonId=
+exports.getTags = async (req, res) => {
+  const { salonId } = req.query;
+  if (!salonId) return res.status(400).json({ error: 'salonId required' });
+  try {
+    const clients = await Client.find({ salonId }, 'tags').lean();
+    const tagSet = new Set();
+    clients.forEach(c => (c.tags || []).forEach(t => { if (t) tagSet.add(t); }));
+    res.json([...tagSet].sort());
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// PATCH /api/clients/bulk-tag
+exports.bulkTag = async (req, res) => {
+  const { clientIds, addTags, removeTags, salonId } = req.body;
+  if (!salonId || !clientIds || !clientIds.length) {
+    return res.status(400).json({ error: 'salonId and clientIds required' });
+  }
+  try {
+    let modifiedCount = 0;
+    if (addTags && addTags.length) {
+      const r = await Client.updateMany(
+        { _id: { $in: clientIds }, salonId },
+        { $addToSet: { tags: { $each: addTags } } }
+      );
+      modifiedCount += r.modifiedCount;
+    }
+    if (removeTags && removeTags.length) {
+      const r = await Client.updateMany(
+        { _id: { $in: clientIds }, salonId },
+        { $pull: { tags: { $in: removeTags } } }
+      );
+      modifiedCount += r.modifiedCount;
+    }
+    res.json({ updated: modifiedCount });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

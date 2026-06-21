@@ -7,5 +7,6 @@ router.post('/', cadenceController.createCadence);
 router.patch('/:id', cadenceController.updateCadence);
 router.delete('/:id', cadenceController.deleteCadence);
 router.get('/:id/enrollments', cadenceController.getEnrollments);
+router.post('/:id/enroll', cadenceController.bulkEnroll);
 
 module.exports = router;

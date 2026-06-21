@@ -7,13 +7,56 @@ import {
   createClient, updateClient, getClients, updateSalonSettings,
   mergeClients, bulkImportClients,
   sendCopilotMessage, uploadPhoto, getSalonBySlug, getBarberPerformanceReport,
-  getCadences, updateCadence, getCadenceEnrollments,
-  getCallLogs, triggerVoiceCall
+  getCadences, createCadence, updateCadence, deleteCadence, getCadenceEnrollments,
+  bulkEnrollCadence, getClientTags, bulkTagClients
 } from '../services/api';
 import dayjs from 'dayjs';
 import './AdminCalendarPage.css';
+import ReportsTab from './ReportsTab';
 
 const HOURS = Array.from({ length: 13 }, (_, i) => `${String(i + 8).padStart(2, '0')}:00`); // 8AM - 8PM
+
+// Lightweight markdown → JSX renderer for bot chat messages
+function renderInline(text) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/);
+  return parts.map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
+function renderBotText(text) {
+  if (!text) return null;
+  const lines = text.split('\n');
+  const out = [];
+  let listItems = [];
+
+  const flushList = (key) => {
+    if (listItems.length) {
+      out.push(
+        <ul key={`ul${key}`} style={{ margin: '6px 0 2px', paddingLeft: '16px' }}>
+          {listItems}
+        </ul>
+      );
+      listItems = [];
+    }
+  };
+
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (/^[-•]\s/.test(t)) {
+      listItems.push(<li key={i}>{renderInline(t.slice(2))}</li>);
+    } else if (/^\d+\.\s/.test(t)) {
+      listItems.push(<li key={i}>{renderInline(t.replace(/^\d+\.\s/, ''))}</li>);
+    } else {
+      flushList(i);
+      if (t) out.push(<p key={i} style={{ margin: '0 0 4px' }}>{renderInline(t)}</p>);
+    }
+  });
+  flushList('end');
+  return out;
+}
 
 export default function AdminCalendarPage() {
   const [activeTab, setActiveTab] = useState('calendar'); // 'calendar' | 'staff' | 'services' | 'clients' | 'retention' | 'settings'
@@ -24,7 +67,24 @@ export default function AdminCalendarPage() {
   const [clients, setClients] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState('');
   const [weekStart, setWeekStart] = useState(dayjs().startOf('week'));
+  const [calendarViewMode, setCalendarViewMode] = useState('staff-day'); // 'week' | 'staff-day'
+  const [selectedDate, setSelectedDate] = useState(dayjs());
+  const [nowTime, setNowTime] = useState(dayjs());
   const [selectedAppointment, setSelectedAppointment] = useState(null);
+
+  // Drag and Drop States
+  const [draggedApptId, setDraggedApptId] = useState(null);
+  const [dragOverCol, setDragOverCol] = useState(null);
+  const [pendingMove, setPendingMove] = useState(null);
+  const [dragGrabOffset, setDragGrabOffset] = useState(0);
+
+  // Update current time every minute for calendar current-time line
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowTime(dayjs());
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
   const [showAddModal, setShowAddModal] = useState(false);
   const [salonId, setSalonId] = useState('');
   const [salon, setSalon] = useState(null);
@@ -35,6 +95,7 @@ export default function AdminCalendarPage() {
   // Retention Dashboard State
   const [retentionData, setRetentionData] = useState({ summary: {}, clients: [] });
   const [retentionLoading, setRetentionLoading] = useState(false);
+  const [retentionFilter, setRetentionFilter] = useState(null); // null | 'active' | 'slipping' | 'dormant' | 'all'
   const [selectedRetentionClient, setSelectedRetentionClient] = useState(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [smsSending, setSmsSending] = useState(false);
@@ -61,8 +122,9 @@ export default function AdminCalendarPage() {
   const [editingClientId, setEditingClientId] = useState(null);
   const [clientForm, setClientForm] = useState({
     firstName: '', lastName: '', phone: '', email: '',
-    notes: '', hairType: '', isTrusted: false
+    notes: '', hairType: '', isTrusted: false, tags: []
   });
+  const [tagInput, setTagInput] = useState('');
 
   // Client Merge States
   const [showMergeModal, setShowMergeModal] = useState(false);
@@ -83,17 +145,18 @@ export default function AdminCalendarPage() {
   const [importResults, setImportResults] = useState(null);
   const [importLoading, setImportLoading] = useState(false);
 
-  // Voice Agent States
-  const [callLogs, setCallLogs] = useState([]);
-  const [selectedCallLog, setSelectedCallLog] = useState(null);
-  const [voiceLoading, setVoiceLoading] = useState(false);
-  const [showCallDetailsModal, setShowCallDetailsModal] = useState(false);
-  const [triggerCallForm, setTriggerCallForm] = useState({
-    clientId: '',
-    type: 'confirmation',
-    appointmentId: ''
-  });
-  const [voiceTabMessage, setVoiceTabMessage] = useState({ type: '', text: '' });
+  // Outreach Apollo States
+  const [outreachSubTab, setOutreachSubTab] = useState('steps');
+  const [addingStep, setAddingStep] = useState(false);
+  const [showNewCadenceForm, setShowNewCadenceForm] = useState(false);
+  const [newCadenceForm, setNewCadenceForm] = useState({ name: '', type: 'marketing' });
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [enrollMode, setEnrollMode] = useState('tag');
+  const [enrollTag, setEnrollTag] = useState('');
+  const [enrollSelectedClients, setEnrollSelectedClients] = useState([]);
+  const [salonTags, setSalonTags] = useState([]);
+  const [enrollLoading, setEnrollLoading] = useState(false);
+  const [outreachMessage, setOutreachMessage] = useState({ type: '', text: '' });
 
   // Settings State
   const [settingsForm, setSettingsForm] = useState({
@@ -132,13 +195,19 @@ export default function AdminCalendarPage() {
   const [cadenceEnrollments, setCadenceEnrollments] = useState([]);
   const [enrollmentsLoading, setEnrollmentsLoading] = useState(false);
   const [editingStep, setEditingStep] = useState(null);
-  const [stepForm, setStepForm] = useState({ delayValue: 24, delayUnit: 'hours', messageTemplate: '' });
+  const [stepForm, setStepForm] = useState({ channel: 'sms', delayValue: 24, delayUnit: 'hours', delayDirection: 'after', messageTemplate: '', voiceCallType: 'confirmation' });
 
-  const loadCadences = useCallback(() => {
+  const loadCadences = useCallback((keepSelected = false) => {
     if (!salonId) return;
     setCadencesLoading(true);
     getCadences(salonId)
-      .then(data => { setCadences(data); setCadencesLoading(false); })
+      .then(data => {
+        setCadences(data);
+        setCadencesLoading(false);
+        if (keepSelected) {
+          setSelectedCadence(prev => prev ? data.find(c => c._id === prev._id) || prev : prev);
+        }
+      })
       .catch(() => setCadencesLoading(false));
   }, [salonId]);
 
@@ -153,20 +222,87 @@ export default function AdminCalendarPage() {
       .catch(() => setEnrollmentsLoading(false));
   }, []);
 
+  const loadSalonTags = useCallback(() => {
+    if (!salonId) return;
+    getClientTags(salonId).then(tags => setSalonTags(tags)).catch(() => {});
+  }, [salonId]);
+
+  const handleSelectCadence = (cadence) => {
+    setSelectedCadence(cadence);
+    setOutreachSubTab('steps');
+    setEditingStep(null);
+    setAddingStep(false);
+    setCadenceEnrollments([]);
+  };
+
   const handleToggleCadence = async (cadence) => {
-    await updateCadence(cadence._id, { isActive: !cadence.isActive });
+    const updated = await updateCadence(cadence._id, { isActive: !cadence.isActive });
+    setSelectedCadence(prev => prev?._id === cadence._id ? { ...prev, isActive: !cadence.isActive } : prev);
+    loadCadences(true);
+  };
+
+  const handleSaveStep = async (stepOrder) => {
+    if (!selectedCadence) return;
+    const updatedSteps = selectedCadence.steps.map(s =>
+      s.order === stepOrder ? { ...s, ...stepForm } : s
+    );
+    await updateCadence(selectedCadence._id, { steps: updatedSteps });
+    setEditingStep(null);
+    loadCadences(true);
+  };
+
+  const handleAddStep = async () => {
+    if (!selectedCadence) return;
+    const nextOrder = (selectedCadence.steps?.length || 0) + 1;
+    const newStep = { ...stepForm, order: nextOrder };
+    const updatedSteps = [...(selectedCadence.steps || []), newStep];
+    await updateCadence(selectedCadence._id, { steps: updatedSteps });
+    setAddingStep(false);
+    loadCadences(true);
+  };
+
+  const handleDeleteStep = async (stepOrder) => {
+    if (!selectedCadence) return;
+    const filtered = selectedCadence.steps
+      .filter(s => s.order !== stepOrder)
+      .map((s, i) => ({ ...s, order: i + 1 }));
+    await updateCadence(selectedCadence._id, { steps: filtered });
+    loadCadences(true);
+  };
+
+  const handleCreateCadence = async () => {
+    if (!newCadenceForm.name || !salonId) return;
+    const cadence = await createCadence({ ...newCadenceForm, salonId, steps: [] });
+    setShowNewCadenceForm(false);
+    setNewCadenceForm({ name: '', type: 'marketing' });
+    loadCadences();
+    setSelectedCadence({ ...cadence, steps: [], stats: { totalEnrollments: 0, activeEnrollments: 0, completedEnrollments: 0, totalMessagesSent: 0 } });
+  };
+
+  const handleDeleteCadence = async (cadenceId) => {
+    if (!window.confirm('Delete this sequence and all its enrollments?')) return;
+    await deleteCadence(cadenceId);
+    setSelectedCadence(null);
     loadCadences();
   };
 
-  const handleSaveStep = async (cadence, stepOrder) => {
-    const updatedSteps = cadence.steps.map(s =>
-      s.order === stepOrder
-        ? { ...s, delayValue: stepForm.delayValue, delayUnit: stepForm.delayUnit, messageTemplate: stepForm.messageTemplate }
-        : s
-    );
-    await updateCadence(cadence._id, { steps: updatedSteps });
-    setEditingStep(null);
-    loadCadences();
+  const handleBulkEnroll = async () => {
+    if (!selectedCadence) return;
+    setEnrollLoading(true);
+    setOutreachMessage({ type: '', text: '' });
+    try {
+      const payload = { salonId };
+      if (enrollMode === 'tag') payload.tag = enrollTag;
+      else payload.clientIds = enrollSelectedClients;
+      const res = await bulkEnrollCadence(selectedCadence._id, payload);
+      setOutreachMessage({ type: 'success', text: `Enrolled ${res.enrolled} client(s). ${res.skipped > 0 ? `${res.skipped} already active.` : ''}` });
+      loadEnrollments(selectedCadence._id);
+      loadCadences(true);
+    } catch (err) {
+      setOutreachMessage({ type: 'error', text: err.response?.data?.error || 'Enrollment failed' });
+    } finally {
+      setEnrollLoading(false);
+    }
   };
 
   // Reports States
@@ -177,7 +313,7 @@ export default function AdminCalendarPage() {
   const loadReportsData = useCallback(() => {
     if (!salonId) return;
     setReportsLoading(true);
-    getBarberPerformanceReport(salonId)
+    getBarberPerformanceReport(salonId, selectedLocation)
       .then(data => {
         setReportsData(data);
         setReportsLoading(false);
@@ -186,7 +322,7 @@ export default function AdminCalendarPage() {
         console.error('Failed to load reports:', err);
         setReportsLoading(false);
       });
-  }, [salonId]);
+  }, [salonId, selectedLocation]);
 
   // CSV Data Export Utility
   const downloadCSV = (data, headers, filename) => {
@@ -259,11 +395,14 @@ export default function AdminCalendarPage() {
 
   const loadAppointments = useCallback(() => {
     if (!selectedLocation) return;
-    getAppointments({
-      locationId: selectedLocation,
-      weekStart: weekStart.format('YYYY-MM-DD'),
-    }).then(setAppointments);
-  }, [selectedLocation, weekStart]);
+    const query = { locationId: selectedLocation };
+    if (calendarViewMode === 'week') {
+      query.weekStart = weekStart.format('YYYY-MM-DD');
+    } else {
+      query.date = selectedDate.format('YYYY-MM-DD');
+    }
+    getAppointments(query).then(setAppointments);
+  }, [selectedLocation, weekStart, selectedDate, calendarViewMode]);
 
   useEffect(loadAppointments, [loadAppointments]);
 
@@ -305,6 +444,70 @@ export default function AdminCalendarPage() {
     return appointments.filter(a =>
       a.barberId?._id === barberId && a.date === dateStr
     );
+  };
+
+  const getBarberHoursForDay = (barber, date) => {
+    const ddd = date.format('ddd').toLowerCase(); // 'sun', 'mon', etc.
+    const hours = barber.workingHours?.[ddd] || { start: '08:00', end: '20:00' };
+    
+    const formatTime = (timeStr) => {
+      if (!timeStr) return '';
+      const [h, m] = timeStr.split(':').map(Number);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const displayHour = h % 12 || 12;
+      return `${displayHour}:${String(m).padStart(2, '0')} ${ampm}`;
+    };
+    
+    return `${formatTime(hours.start)} - ${formatTime(hours.end)}`;
+  };
+
+  const handleAppointmentDrop = (apptId, dateStr, barberId, e) => {
+    setDragOverCol(null);
+    const activeId = apptId || draggedApptId;
+    if (!activeId) return;
+    
+    const appt = appointments.find(a => a._id === activeId);
+    if (!appt) return;
+
+    // Calculate snapped time from drop coordinate, adjusting for where user grabbed the card
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rawDropY = e.clientY - rect.top;
+    const dropY = Math.max(0, rawDropY - dragGrabOffset);
+    const minutesFromStart = (dropY / 100) * 60;
+    const snappedMinutes = Math.round(minutesFromStart / 15) * 15;
+    
+    let newStartMinutes = 8 * 60 + snappedMinutes;
+    if (newStartMinutes < 8 * 60) newStartMinutes = 8 * 60;
+    if (newStartMinutes > 20 * 60) newStartMinutes = 20 * 60;
+    
+    const formatMin = (totalMins) => {
+      const h = Math.floor(totalMins / 60);
+      const m = totalMins % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+    
+    const newStartTime = formatMin(newStartMinutes);
+
+    // Check if the appointment's target slot is actually different from its current slot
+    const currentBarberId = appt.barberId?._id || appt.barberId || '';
+    const targetBarberId = barberId || currentBarberId;
+
+    const isChanged = 
+      dateStr !== appt.date || 
+      newStartTime !== appt.startTime || 
+      targetBarberId !== currentBarberId;
+
+    if (!isChanged) {
+      // Nothing changed, return immediately without showing the confirmation modal
+      return;
+    }
+
+    setPendingMove({
+      apptId: appt._id,
+      dateStr,
+      barberId: targetBarberId,
+      newStartTime,
+    });
   };
 
   const getSlotPosition = (time) => {
@@ -527,6 +730,7 @@ export default function AdminCalendarPage() {
 
   // Client Actions
   const handleOpenClientModal = (client = null) => {
+    setTagInput('');
     if (client) {
       setEditingClientId(client._id);
       setClientForm({
@@ -536,13 +740,14 @@ export default function AdminCalendarPage() {
         email: client.email || '',
         notes: client.notes || '',
         hairType: client.hairType || '',
-        isTrusted: client.isTrusted || false
+        isTrusted: client.isTrusted || false,
+        tags: client.tags || [],
       });
     } else {
       setEditingClientId(null);
       setClientForm({
         firstName: '', lastName: '', phone: '', email: '',
-        notes: '', hairType: '', isTrusted: false
+        notes: '', hairType: '', isTrusted: false, tags: [],
       });
     }
     setShowClientModal(true);
@@ -761,86 +966,6 @@ export default function AdminCalendarPage() {
     }
   };
 
-  // ── AI Voice Agent Handlers ──
-  const loadCallLogs = useCallback(() => {
-    setVoiceLoading(true);
-    getCallLogs(salonId)
-      .then(res => {
-        setCallLogs(res.logs || []);
-        setVoiceLoading(false);
-      })
-      .catch(err => {
-        console.error('Failed to load call logs:', err);
-        setVoiceLoading(false);
-      });
-  }, [salonId]);
-
-  useEffect(() => {
-    if (activeTab === 'voice') {
-      loadCallLogs();
-      if (selectedLocation) {
-        getAppointments({
-          locationId: selectedLocation,
-          weekStart: weekStart.format('YYYY-MM-DD'),
-        }).then(res => {
-          if (res && res.appointments) {
-            setAppointments(res.appointments);
-          } else if (Array.isArray(res)) {
-            setAppointments(res);
-          }
-        });
-      }
-    }
-  }, [activeTab, loadCallLogs, selectedLocation, weekStart]);
-
-  const handleTriggerVoiceCall = async (e) => {
-    e.preventDefault();
-    if (!triggerCallForm.clientId || !triggerCallForm.type) {
-      setVoiceTabMessage({ type: 'error', text: 'Client ID and Call Type are required!' });
-      return;
-    }
-    
-    if (triggerCallForm.type === 'confirmation' && !triggerCallForm.appointmentId) {
-      setVoiceTabMessage({ type: 'error', text: 'Appointment selection is required for confirmation calls!' });
-      return;
-    }
-
-    setVoiceLoading(true);
-    setVoiceTabMessage({ type: '', text: '' });
-    try {
-      const payload = {
-        clientId: triggerCallForm.clientId,
-        type: triggerCallForm.type,
-        salonId,
-        appointmentId: triggerCallForm.type === 'confirmation' ? triggerCallForm.appointmentId : undefined,
-      };
-      
-      const res = await triggerVoiceCall(payload);
-      if (res.success) {
-        setVoiceTabMessage({ 
-          type: 'success', 
-          text: res.mock 
-            ? 'Mock call completed! View the simulated transcript below.' 
-            : 'Outbound call triggered successfully via Twilio!' 
-        });
-        setTriggerCallForm(f => ({ ...f, clientId: '', appointmentId: '' }));
-        loadCallLogs();
-        loadData();
-      } else {
-        setVoiceTabMessage({ type: 'error', text: res.error || 'Failed to trigger outbound voice call' });
-      }
-    } catch (err) {
-      setVoiceTabMessage({ type: 'error', text: err.response?.data?.error || 'Failed to initiate outbound call' });
-    } finally {
-      setVoiceLoading(false);
-    }
-  };
-
-  const handleOpenCallDetails = (log) => {
-    setSelectedCallLog(log);
-    setShowCallDetailsModal(true);
-  };
-
   // Settings Action
   const handleSaveSettings = async () => {
     setSettingsSaving(true);
@@ -928,6 +1053,10 @@ export default function AdminCalendarPage() {
     } finally {
       setCopilotLoading(false);
     }
+  };
+
+  const handleClearChat = () => {
+    setChatHistory([{ sender: 'bot', text: 'Chat cleared. How can I help you manage the salon today?' }]);
   };
 
   // Voice Speech Recognition Handler
@@ -1031,11 +1160,6 @@ export default function AdminCalendarPage() {
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
               </span> Outreach
             </button>
-            <button className={`nav-item ${activeTab === 'voice' ? 'active' : ''}`} onClick={() => handleTabChange('voice')}>
-              <span className="nav-icon">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-              </span> AI Voice Agent
-            </button>
           </div>
 
           <div className="sidebar-section">
@@ -1117,19 +1241,63 @@ export default function AdminCalendarPage() {
           {/* TAB 1: CALENDAR VIEW */}
           {activeTab === 'calendar' && (
             <div className="tab-pane animate-fade-in">
-              <div className="week-nav">
-                <button className="btn btn-ghost" onClick={() => setWeekStart(w => w.subtract(7, 'day'))}>← Prev Week</button>
-                <h2 className="week-title">
-                  {weekStart.format('MMMM D')} – {weekStart.add(6, 'day').format('MMMM D, YYYY')}
-                </h2>
-                <button className="btn btn-ghost" onClick={() => setWeekStart(dayjs().startOf('week'))}>Today</button>
-                <button className="btn btn-ghost" onClick={() => setWeekStart(w => w.add(7, 'day'))}>Next Week →</button>
+              <div className="calendar-controls">
+                <div className="calendar-nav-section">
+                  {calendarViewMode === 'week' ? (
+                    <div className="week-nav">
+                      <button className="btn btn-ghost" onClick={() => setWeekStart(w => w.subtract(7, 'day'))}>← Prev Week</button>
+                      <h2 className="week-title">
+                        {weekStart.format('MMMM D')} – {weekStart.add(6, 'day').format('MMMM D, YYYY')}
+                      </h2>
+                      <button className="btn btn-ghost" onClick={() => setWeekStart(dayjs().startOf('week'))}>Today</button>
+                      <button className="btn btn-ghost" onClick={() => setWeekStart(w => w.add(7, 'day'))}>Next Week →</button>
+                    </div>
+                  ) : (
+                    <div className="week-nav">
+                      <button className="btn btn-ghost" onClick={() => setSelectedDate(d => d.subtract(1, 'day'))}>← Prev Day</button>
+                      <h2 className="week-title">
+                        {selectedDate.format('dddd, MMMM D, YYYY')}
+                      </h2>
+                      <button className="btn btn-ghost" onClick={() => setSelectedDate(dayjs())}>Today</button>
+                      <button className="btn btn-ghost" onClick={() => setSelectedDate(d => d.add(1, 'day'))}>Next Day →</button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="calendar-view-toggle">
+                  <button 
+                    className={`btn ${calendarViewMode === 'staff-day' ? 'btn-gold' : 'btn-ghost'}`}
+                    onClick={() => {
+                      setCalendarViewMode('staff-day');
+                      setSelectedDate(weekStart.add(1, 'day')); // sync to Monday of current week
+                    }}
+                  >
+                    Staff Day View
+                  </button>
+                  <button 
+                    className={`btn ${calendarViewMode === 'week' ? 'btn-gold' : 'btn-ghost'}`}
+                    onClick={() => {
+                      setCalendarViewMode('week');
+                      setWeekStart(selectedDate.startOf('week')); // sync week to selected date
+                    }}
+                  >
+                    Weekly View
+                  </button>
+                </div>
               </div>
 
               <div className="calendar-container">
-                <div className="calendar-grid">
+                <div 
+                  className={`calendar-grid ${draggedApptId ? 'dragging-active' : ''}`}
+                  style={{
+                    gridTemplateColumns: calendarViewMode === 'week' 
+                      ? '60px repeat(7, minmax(150px, 1fr))' 
+                      : `60px repeat(${barbers.length || 1}, minmax(200px, 1fr))`
+                  }}
+                >
+                  {/* Time column */}
                   <div className="time-column">
-                    <div className="day-header-cell" />
+                    <div className={calendarViewMode === 'week' ? "day-header-cell" : "day-header-cell staff-header-cell"} />
                     {HOURS.map(h => (
                       <div key={h} className="time-label">
                         {dayjs(`2024-01-01 ${h}`).format('h A')}
@@ -1137,53 +1305,199 @@ export default function AdminCalendarPage() {
                     ))}
                   </div>
 
-                  {weekDays.map(day => (
-                    <div key={day.format('YYYY-MM-DD')} className={`day-column ${day.isSame(dayjs(), 'day') ? 'today' : ''}`}>
-                      <div className="day-header-cell">
-                        <span className="day-name">{day.format('ddd')}</span>
-                        <span className={`day-number ${day.isSame(dayjs(), 'day') ? 'today-num' : ''}`}>{day.format('D')}</span>
-                      </div>
-                      <div className="day-body">
-                        {HOURS.map(h => <div key={h} className="hour-line" />)}
-
-                         {barbers.map(barber => {
-                          const appts = getAppointmentsForBarberDay(barber._id, day);
-                          return appts.map(appt => {
-                            const clientName = `${appt.clientId?.firstName || appt.firstName || 'Client'} ${appt.clientId?.lastName || appt.lastName || ''}`;
-                            return (
-                              <div key={appt._id}
-                                className={`appt-block ${appt.status} density-high`}
-                                style={{
-                                  top: `${getSlotPosition(appt.startTime)}px`,
-                                  height: `${getSlotHeight(appt.startTime, appt.endTime)}px`,
-                                }}
-                                onClick={() => setSelectedAppointment(appt)}
-                                title={`${clientName} - ${appt.serviceId?.name || 'Service'}`}>
-                                <div className="appt-row">
-                                  <span className="appt-time">{dayjs(`2024-01-01 ${appt.startTime}`).format('h:mm A')}</span>
-                                  <span className={`appt-status-tag tag-${appt.status}`}>{appt.status.replace('-', ' ')}</span>
-                                </div>
-                                <span className="appt-client">{clientName}</span>
-                                <span className="appt-service">{appt.serviceId?.name || 'Service'}</span>
-                                <span className="appt-barber-tag">{appt.barberId?.name}</span>
+                  {/* Columns */}
+                  {calendarViewMode === 'week' ? (
+                    // Weekly View columns (Days)
+                    weekDays.map(day => {
+                      const dayStr = day.format('YYYY-MM-DD');
+                      return (
+                        <div key={dayStr} className={`day-column ${day.isSame(dayjs(), 'day') ? 'today' : ''}`}>
+                          <div className="day-header-cell">
+                            <span className="day-name">{day.format('ddd')}</span>
+                            <span className={`day-number ${day.isSame(dayjs(), 'day') ? 'today-num' : ''}`}>{day.format('D')}</span>
+                          </div>
+                          <div 
+                            className={`day-body ${dragOverCol === dayStr ? 'drag-over' : ''}`}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                            }}
+                            onDragEnter={(e) => {
+                              e.preventDefault();
+                              setDragOverCol(dayStr);
+                            }}
+                            onDragLeave={() => setDragOverCol(null)}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const apptId = e.dataTransfer.getData('text/plain');
+                              handleAppointmentDrop(apptId, dayStr, null, e);
+                            }}
+                          >
+                            {HOURS.map(h => (
+                              <div key={h} className="hour-line">
+                                <div className="quarter-line q1" />
+                                <div className="quarter-line q2" />
+                                <div className="quarter-line q3" />
                               </div>
-                            );
-                          });
-                        })}
-                      </div>
-                    </div>
-                  ))}
+                            ))}
+
+                            {barbers.map(barber => {
+                              const appts = getAppointmentsForBarberDay(barber._id, day);
+                              return appts.map(appt => {
+                                const clientName = `${appt.clientId?.firstName || appt.firstName || 'Client'} ${appt.clientId?.lastName || appt.lastName || ''}`;
+                                const isDragging = draggedApptId === appt._id;
+                                return (
+                                  <div key={appt._id}
+                                    className={`appt-block ${appt.status} density-high ${isDragging ? 'dragging' : ''}`}
+                                    style={{
+                                      top: `${getSlotPosition(appt.startTime)}px`,
+                                      height: `${getSlotHeight(appt.startTime, appt.endTime)}px`,
+                                    }}
+                                    draggable="true"
+                                    onDragStart={(e) => {
+                                      e.dataTransfer.setData('text/plain', appt._id);
+                                      // Calculate vertical offset from top of card where user grabbed
+                                      const cardRect = e.currentTarget.getBoundingClientRect();
+                                      const grabY = e.clientY - cardRect.top;
+                                      setDragGrabOffset(grabY);
+                                      // Defer setting state so the browser can successfully initiate the drag session
+                                      setTimeout(() => {
+                                        setDraggedApptId(appt._id);
+                                      }, 0);
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggedApptId(null);
+                                      setDragOverCol(null);
+                                    }}
+                                    onClick={() => setSelectedAppointment(appt)}
+                                    title={`${clientName} - ${appt.serviceId?.name || 'Service'}`}>
+                                    <div className="appt-row">
+                                      <span className="appt-time">{dayjs(`2024-01-01 ${appt.startTime}`).format('h:mm A')}</span>
+                                      <span className={`appt-status-tag tag-${appt.status}`}>{appt.status.replace('-', ' ')}</span>
+                                    </div>
+                                    <span className="appt-client">{clientName}</span>
+                                    <span className="appt-service">{appt.serviceId?.name || 'Service'}</span>
+                                    <span className="appt-barber-tag">{appt.barberId?.name}</span>
+                                  </div>
+                                );
+                              });
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    // Booksy Staff Day View columns (Barbers)
+                    barbers.map(barber => {
+                      const appts = getAppointmentsForBarberDay(barber._id, selectedDate);
+                      const isTodaySelected = selectedDate.isSame(dayjs(), 'day');
+                      const nowPos = (() => {
+                        const h = nowTime.hour();
+                        const m = nowTime.minute();
+                        if (h < 8 || h >= 20) return null;
+                        return ((h - 8) * 60 + m) / 60 * 100;
+                      })();
+
+                      return (
+                        <div key={barber._id} className="day-column staff-column">
+                          <div className="day-header-cell staff-header-cell">
+                            <img 
+                              src={barber.photo ? (barber.photo.startsWith('http') ? barber.photo : `${IMAGE_BASE}${barber.photo}`) : '/favicon.avif'} 
+                              alt={barber.name} 
+                              className="calendar-staff-avatar" 
+                            />
+                            <div className="staff-header-text">
+                              <span className="calendar-staff-name">{barber.name}</span>
+                              <span className="calendar-staff-hours">{getBarberHoursForDay(barber, selectedDate)}</span>
+                            </div>
+                          </div>
+                          <div 
+                            className={`day-body ${dragOverCol === barber._id ? 'drag-over' : ''}`}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                            }}
+                            onDragEnter={(e) => {
+                              e.preventDefault();
+                              setDragOverCol(barber._id);
+                            }}
+                            onDragLeave={() => setDragOverCol(null)}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const apptId = e.dataTransfer.getData('text/plain');
+                              handleAppointmentDrop(apptId, selectedDate.format('YYYY-MM-DD'), barber._id, e);
+                            }}
+                          >
+                            {HOURS.map(h => (
+                              <div key={h} className="hour-line">
+                                <div className="quarter-line q1" />
+                                <div className="quarter-line q2" />
+                                <div className="quarter-line q3" />
+                              </div>
+                            ))}
+
+                            {/* Current time red line */}
+                            {isTodaySelected && nowPos !== null && (
+                              <div className="current-time-line" style={{ top: `${nowPos}px` }}>
+                                <span className="current-time-marker">{nowTime.format('h:mm A')}</span>
+                              </div>
+                            )}
+
+                            {appts.map(appt => {
+                              const clientName = `${appt.clientId?.firstName || appt.firstName || 'Client'} ${appt.clientId?.lastName || appt.lastName || ''}`;
+                              const isDragging = draggedApptId === appt._id;
+                              return (
+                                <div key={appt._id}
+                                  className={`appt-block ${appt.status} density-high ${isDragging ? 'dragging' : ''}`}
+                                  style={{
+                                    top: `${getSlotPosition(appt.startTime)}px`,
+                                    height: `${getSlotHeight(appt.startTime, appt.endTime)}px`,
+                                  }}
+                                  draggable="true"
+                                  onDragStart={(e) => {
+                                    e.dataTransfer.setData('text/plain', appt._id);
+                                    // Calculate vertical offset from top of card where user grabbed
+                                    const cardRect = e.currentTarget.getBoundingClientRect();
+                                    const grabY = e.clientY - cardRect.top;
+                                    setDragGrabOffset(grabY);
+                                    // Defer setting state so the browser can successfully initiate the drag session
+                                    setTimeout(() => {
+                                      setDraggedApptId(appt._id);
+                                    }, 0);
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggedApptId(null);
+                                    setDragOverCol(null);
+                                  }}
+                                  onClick={() => setSelectedAppointment(appt)}
+                                  title={`${clientName} - ${appt.serviceId?.name || 'Service'}`}>
+                                  <div className="appt-row">
+                                    <span className="appt-time">{dayjs(`2024-01-01 ${appt.startTime}`).format('h:mm A')}</span>
+                                    <span className={`appt-status-tag tag-${appt.status}`}>{appt.status.replace('-', ' ')}</span>
+                                  </div>
+                                  <span className="appt-client">{clientName}</span>
+                                  <span className="appt-service">{appt.serviceId?.name || 'Service'}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
-              <div className="barber-legend">
-                {barbers.map(b => (
-                  <span key={b._id} className="legend-item">
-                    <span className="legend-dot" />
-                    {b.name} ({b.title || 'Barber'})
-                  </span>
-                ))}
-              </div>
+              {calendarViewMode === 'week' && (
+                <div className="barber-legend">
+                  {barbers.map(b => (
+                    <span key={b._id} className="legend-item">
+                      <span className="legend-dot" />
+                      {b.name} ({b.title || 'Barber'})
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -1274,7 +1588,7 @@ export default function AdminCalendarPage() {
                       <th>Email</th>
                       <th>Visit Count</th>
                       <th>Last Visit</th>
-                      <th>Notes</th>
+                      <th>Tags</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -1286,7 +1600,13 @@ export default function AdminCalendarPage() {
                         <td>{c.email || '—'}</td>
                         <td><span className="visit-badge">{c.visitCount || 0} visits</span></td>
                         <td>{c.lastVisit ? dayjs(c.lastVisit).format('MMM D, YYYY') : 'Never'}</td>
-                        <td className="client-notes-cell">{c.notes || '—'}</td>
+                        <td>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {(c.tags || []).map(tag => (
+                              <span key={tag} className="tag-pill">{tag}</span>
+                            ))}
+                          </div>
+                        </td>
                         <td>
                           <div style={{ display: 'flex', gap: '6px' }}>
                             <button className="btn btn-outline btn-sm" onClick={() => handleOpenClientModal(c)}>Edit</button>
@@ -1309,771 +1629,506 @@ export default function AdminCalendarPage() {
           )}
 
           {/* TAB 5: CLIENT RETENTION */}
-          {activeTab === 'retention' && (
-            <div className="tab-pane animate-fade-in">
-              <div className="metrics-grid">
-                <div className="metric-card">
-                  <span className="metric-dot total"></span>
-                  <div className="metric-info">
-                    <h3>Total Clients</h3>
-                    <p className="metric-value">{retentionData.summary?.totalClients || 0}</p>
-                  </div>
-                </div>
-                <div className="metric-card active">
-                  <span className="metric-dot active"></span>
-                  <div className="metric-info">
-                    <h3>Active</h3>
-                    <p className="metric-value">{retentionData.summary?.activeCount || 0}</p>
-                    <small className="metric-sub">Visited in last 30d</small>
-                  </div>
-                </div>
-                <div className="metric-card slipping">
-                  <span className="metric-dot slipping"></span>
-                  <div className="metric-info">
-                    <h3>Slipping</h3>
-                    <p className="metric-value">{retentionData.summary?.slippingCount || 0}</p>
-                    <small className="metric-sub">Last visit 30-60d</small>
-                  </div>
-                </div>
-                <div className="metric-card dormant">
-                  <span className="metric-dot dormant"></span>
-                  <div className="metric-info">
-                    <h3>At Risk</h3>
-                    <p className="metric-value">{retentionData.summary?.dormantCount || 0}</p>
-                    <small className="metric-sub">No visit in 60d+</small>
-                  </div>
-                </div>
-                <div className="metric-card loyalty">
-                  <span className="metric-dot loyalty"></span>
-                  <div className="metric-info">
-                    <h3>Retention Rate</h3>
-                    <p className="metric-value">{retentionData.summary?.retentionRate || 0}%</p>
-                    <small className="metric-sub">Loyalty index score</small>
-                  </div>
-                </div>
-              </div>
+          {activeTab === 'retention' && (() => {
+            const allClients = retentionData.clients || [];
+            const displayedClients =
+              retentionFilter === 'active'   ? allClients.filter(c => c.engagementStatus === 'active') :
+              retentionFilter === 'slipping' ? allClients.filter(c => c.engagementStatus === 'slipping') :
+              retentionFilter === 'dormant'  ? allClients.filter(c => c.engagementStatus === 'dormant') :
+              retentionFilter === 'all'      ? allClients :
+              allClients.filter(c => c.engagementStatus !== 'active'); // default: at-risk only
 
-              <div className="retention-table-container">
-                <div className="table-header">
-                  <h2>At-Risk & Dormant Clients</h2>
-                  <p>Clients who haven't booked an appointment recently. Use AI re-engagement to win them back.</p>
+            const tableTitle =
+              retentionFilter === 'active'   ? 'Active Clients' :
+              retentionFilter === 'slipping' ? 'Slipping Clients' :
+              retentionFilter === 'dormant'  ? 'At-Risk Clients' :
+              retentionFilter === 'all'      ? 'All Clients' :
+              'At-Risk & Slipping Clients';
+
+            const tableDesc =
+              retentionFilter === 'active'   ? 'Clients who visited in the last 30 days — healthy engagement.' :
+              retentionFilter === 'slipping' ? 'Clients who haven\'t visited in 30–60 days. A timely nudge can bring them back.' :
+              retentionFilter === 'dormant'  ? 'Clients overdue for a visit (60+ days). High priority for re-engagement.' :
+              retentionFilter === 'all'      ? 'All salon clients across every engagement tier.' :
+              'Clients who haven\'t booked recently. Use AI re-engagement to win them back.';
+
+            const toggleFilter = (key) => setRetentionFilter(f => f === key ? null : key);
+
+            return (
+              <div className="tab-pane animate-fade-in">
+                <div className="metrics-grid">
+                  <div
+                    className={`metric-card clickable ${retentionFilter === 'all' ? 'selected' : ''}`}
+                    onClick={() => toggleFilter('all')}
+                    role="button" tabIndex={0}
+                    onKeyDown={e => e.key === 'Enter' && toggleFilter('all')}
+                  >
+                    <span className="metric-dot total" />
+                    <div className="metric-info">
+                      <h3>Total Clients</h3>
+                      <p className="metric-value">{retentionData.summary?.totalClients || 0}</p>
+                      <small className="metric-sub">Click to view all</small>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`metric-card clickable ${retentionFilter === 'active' ? 'selected active-selected' : ''}`}
+                    onClick={() => toggleFilter('active')}
+                    role="button" tabIndex={0}
+                    onKeyDown={e => e.key === 'Enter' && toggleFilter('active')}
+                  >
+                    <span className="metric-dot active" />
+                    <div className="metric-info">
+                      <h3>Active</h3>
+                      <p className="metric-value">{retentionData.summary?.activeCount || 0}</p>
+                      <small className="metric-sub">Visited in last 30 days</small>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`metric-card clickable ${retentionFilter === 'slipping' ? 'selected slipping-selected' : ''}`}
+                    onClick={() => toggleFilter('slipping')}
+                    role="button" tabIndex={0}
+                    onKeyDown={e => e.key === 'Enter' && toggleFilter('slipping')}
+                  >
+                    <span className="metric-dot slipping" />
+                    <div className="metric-info">
+                      <h3>Slipping</h3>
+                      <p className="metric-value">{retentionData.summary?.slippingCount || 0}</p>
+                      <small className="metric-sub">Last visit 30–60 days ago</small>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`metric-card clickable ${retentionFilter === 'dormant' ? 'selected dormant-selected' : ''}`}
+                    onClick={() => toggleFilter('dormant')}
+                    role="button" tabIndex={0}
+                    onKeyDown={e => e.key === 'Enter' && toggleFilter('dormant')}
+                  >
+                    <span className="metric-dot dormant" />
+                    <div className="metric-info">
+                      <h3>At Risk</h3>
+                      <p className="metric-value">{retentionData.summary?.dormantCount || 0}</p>
+                      <small className="metric-sub">No visit in 60+ days</small>
+                    </div>
+                  </div>
+
+                  <div className="metric-card">
+                    <span className="metric-dot loyalty" />
+                    <div className="metric-info">
+                      <h3>Retention Rate</h3>
+                      <p className="metric-value">{retentionData.summary?.retentionRate || 0}%</p>
+                      <small className="metric-sub">Active / total ratio</small>
+                    </div>
+                  </div>
                 </div>
 
-                {retentionLoading ? (
-                  <div className="retention-loading">Loading retention insights...</div>
-                ) : retentionData.clients?.length === 0 ? (
-                  <div className="retention-empty">All clients are active! Great job keeping them engaged.</div>
-                ) : (
-                  <div className="table-responsive">
-                    <table className="retention-table">
-                      <thead>
-                        <tr>
-                          <th>Client</th>
-                          <th>Last Visit</th>
-                          <th>Days Idle</th>
-                          <th>Status</th>
-                          <th>Preferred Barber</th>
-                          <th>AI Recommendation</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {retentionData.clients?.map(client => (
-                          <tr key={client._id} className={client.engagementStatus}>
-                            <td>
-                              <div className="client-cell">
-                                <strong>{client.firstName} {client.lastName}</strong>
-                                <span className="client-sub">{client.phone}</span>
-                              </div>
-                            </td>
-                            <td>{client.lastVisit ? dayjs(client.lastVisit).format('MMM D, YYYY') : 'Never'}</td>
-                            <td>
-                              <span className={`days-badge ${client.daysSinceLastVisit > 60 ? 'critical' : 'warning'}`}>
-                                {client.daysSinceLastVisit} days
-                              </span>
-                            </td>
-                            <td>
-                              <span className={`status-badge ${client.engagementStatus}`}>
-                                {client.engagementStatus === 'dormant' ? 'At Risk' : 'Slipping'}
-                              </span>
-                            </td>
-                            <td>{client.preferredBarberId?.name || 'Any Stylist'}</td>
-                            <td>
-                              <div className="ai-rec-box">
-                                <span className="ai-sparkle">AI Suggestion:</span>
-                                <p className="ai-desc">{client.aiRecommendation}</p>
-                                {client.tags?.includes('sms-reengaged') && (
-                                  <span className="reengaged-tag">Re-engaged</span>
-                                )}
-                              </div>
-                            </td>
-                            <td>
-                              <button className="btn btn-gold btn-sm" onClick={() => handleOpenSMSModal(client)}>
-                                Re-Engage
-                              </button>
-                            </td>
+                <div className="retention-table-container">
+                  <div className="table-header">
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <h2 style={{ margin: 0 }}>{tableTitle}</h2>
+                        {retentionFilter && (
+                          <button
+                            type="button"
+                            className="filter-clear-pill"
+                            onClick={() => setRetentionFilter(null)}
+                          >
+                            Clear filter ×
+                          </button>
+                        )}
+                      </div>
+                      <p style={{ margin: '4px 0 0', color: 'var(--color-gray-500)', fontSize: '0.875rem' }}>{tableDesc}</p>
+                    </div>
+                  </div>
+
+                  {retentionLoading ? (
+                    <div className="retention-loading">Loading retention insights...</div>
+                  ) : displayedClients.length === 0 ? (
+                    <div className="retention-empty">
+                      {retentionFilter === 'active'
+                        ? 'No active clients yet — clients who visit within 30 days will appear here.'
+                        : retentionFilter === 'slipping'
+                        ? 'No slipping clients right now.'
+                        : retentionFilter === 'dormant'
+                        ? 'No at-risk clients right now — great retention!'
+                        : 'All clients are active! Great job keeping them engaged.'}
+                    </div>
+                  ) : (
+                    <div className="table-responsive">
+                      <table className="retention-table">
+                        <thead>
+                          <tr>
+                            <th>Client</th>
+                            <th>Last Visit</th>
+                            <th>Days Idle</th>
+                            <th>Status</th>
+                            <th>Preferred Barber</th>
+                            <th>AI Recommendation</th>
+                            <th>Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                        </thead>
+                        <tbody>
+                          {displayedClients.map(client => {
+                            const neverVisited = !client.lastVisit || client.daysSinceLastVisit >= 999;
+                            const daysBadgeClass = neverVisited ? 'never' :
+                              client.daysSinceLastVisit > 60 ? 'critical' :
+                              client.daysSinceLastVisit > 30 ? 'warning' : 'good';
+                            const daysLabel = neverVisited ? 'Never' : `${client.daysSinceLastVisit}d`;
+
+                            const statusLabel =
+                              client.engagementStatus === 'active'   ? 'Active' :
+                              client.engagementStatus === 'slipping' ? 'Slipping' : 'At Risk';
+
+                            return (
+                              <tr key={client._id} className={client.engagementStatus}>
+                                <td>
+                                  <div className="client-cell">
+                                    <strong>{client.firstName} {client.lastName}</strong>
+                                    <span className="client-sub">{client.phone}</span>
+                                  </div>
+                                </td>
+                                <td className="retention-td-date">
+                                  {client.lastVisit ? dayjs(client.lastVisit).format('MMM D, YYYY') : '—'}
+                                </td>
+                                <td>
+                                  <span className={`days-badge ${daysBadgeClass}`}>{daysLabel}</span>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${client.engagementStatus}`}>{statusLabel}</span>
+                                </td>
+                                <td>{client.preferredBarberId?.name || <span style={{ color: 'var(--color-gray-400)' }}>Any</span>}</td>
+                                <td>
+                                  {client.aiRecommendation ? (
+                                    <div className="ai-rec-box">
+                                      <span className="ai-sparkle">AI Suggestion</span>
+                                      <p className="ai-desc">{client.aiRecommendation}</p>
+                                      {client.tags?.includes('sms-reengaged') && (
+                                        <span className="reengaged-tag">Re-engaged</span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="ai-no-action">Engaged — no action needed</span>
+                                  )}
+                                </td>
+                                <td>
+                                  {client.engagementStatus !== 'active' ? (
+                                    <button className="btn btn-gold btn-sm" onClick={() => handleOpenSMSModal(client)}>
+                                      Re-Engage
+                                    </button>
+                                  ) : (
+                                    <span className="retention-active-badge">Active</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* TAB 7: REPORTS & PERFORMANCE */}
           {activeTab === 'reports' && (
             <div className="tab-pane animate-fade-in">
-              {reportsLoading ? (
-                <div className="retention-loading">Loading staff reports...</div>
+              <ReportsTab
+                reportsData={reportsData}
+                reportsLoading={reportsLoading}
+                activeReportTab={activeReportTab}
+                setActiveReportTab={setActiveReportTab}
+                downloadCSV={downloadCSV}
+                IMAGE_BASE={IMAGE_BASE}
+              />
+            </div>
+          )}
+
+          {/* TAB 8: OUTREACH — Apollo-style Sequences */}
+          {activeTab === 'outreach' && (
+            <div className="tab-pane outreach-pane animate-fade-in">
+
+              {/* Header */}
+              <div className="outreach-header">
+                <h2 className="outreach-title">Sequences</h2>
+                <button className="btn btn-gold btn-sm" onClick={() => setShowNewCadenceForm(true)}>+ New Sequence</button>
+              </div>
+
+              {showNewCadenceForm && (
+                <div className="new-cadence-form">
+                  <input type="text" className="form-input" placeholder="Sequence name..."
+                    value={newCadenceForm.name} onChange={e => setNewCadenceForm(f => ({ ...f, name: e.target.value }))} />
+                  <select className="form-input" value={newCadenceForm.type} onChange={e => setNewCadenceForm(f => ({ ...f, type: e.target.value }))}>
+                    <option value="marketing">Marketing</option>
+                    <option value="pre-appointment">Pre-Appointment</option>
+                    <option value="post-visit">Post-Visit</option>
+                  </select>
+                  <button className="btn btn-gold btn-sm" onClick={handleCreateCadence} disabled={!newCadenceForm.name}>Create</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setShowNewCadenceForm(false)}>Cancel</button>
+                </div>
+              )}
+
+              {cadencesLoading ? (
+                <div className="retention-loading">Loading sequences...</div>
               ) : (
-                <>
-                  {/* Shop Summary Metrics Grid */}
-                  <div className="metrics-grid">
-                    <div className="metric-card">
-                      <span className="metric-dot total"></span>
-                      <div className="metric-info">
-                        <h3>Total Salon Revenue</h3>
-                        <p className="metric-value">${reportsData.summary?.totalRevenue?.toFixed(2) || '0.00'}</p>
-                      </div>
-                    </div>
-                    <div className="metric-card active">
-                      <span className="metric-dot active"></span>
-                      <div className="metric-info">
-                        <h3>Confirmed Bookings</h3>
-                        <p className="metric-value">{reportsData.summary?.totalBookings || 0}</p>
-                      </div>
-                    </div>
-                    <div className="metric-card loyalty">
-                      <span className="metric-dot loyalty"></span>
-                      <div className="metric-info">
-                        <h3>Overall Client Return Rate</h3>
-                        <p className="metric-value">{reportsData.summary?.returnRate || 0}%</p>
-                        <small className="metric-sub">Repeat visitors index</small>
-                      </div>
-                    </div>
-                    <div className="metric-card dormant">
-                      <span className="metric-dot dormant"></span>
-                      <div className="metric-info">
-                        <h3>Total No-Shows</h3>
-                        <p className="metric-value">{reportsData.summary?.totalNoShows || 0}</p>
-                      </div>
-                    </div>
-                  </div>
+                <div className="outreach-layout">
 
-                  {/* Reports Sub-Tabs Navigation */}
-                  <div className="reports-subtabs-nav">
-                    <button 
-                      type="button" 
-                      className={`reports-subtab-btn ${activeReportTab === 'staff' ? 'active' : ''}`}
-                      onClick={() => setActiveReportTab('staff')}
-                    >
-                      Staff Performance
-                    </button>
-                    <button 
-                      type="button" 
-                      className={`reports-subtab-btn ${activeReportTab === 'trends' ? 'active' : ''}`}
-                      onClick={() => setActiveReportTab('trends')}
-                    >
-                      Revenue Trends
-                    </button>
-                    <button 
-                      type="button" 
-                      className={`reports-subtab-btn ${activeReportTab === 'services' ? 'active' : ''}`}
-                      onClick={() => setActiveReportTab('services')}
-                    >
-                      Service Popularity
-                    </button>
-                    <button 
-                      type="button" 
-                      className={`reports-subtab-btn ${activeReportTab === 'locations' ? 'active' : ''}`}
-                      onClick={() => setActiveReportTab('locations')}
-                    >
-                      Location Comparison
-                    </button>
-                  </div>
-
-                  {/* Staff Performance Table */}
-                  {activeReportTab === 'staff' && (
-                    <div className="retention-table-container animate-fade-in">
-                      <div className="table-header">
-                        <div>
-                          <h2>Barber Performance & Return Rates</h2>
-                          <p>Analyze unique client return rates, total bookings, no-show rates, and revenue per barber to guide staffing decisions.</p>
+                  {/* Left: Sequence List */}
+                  <div className="sequence-list">
+                    {cadences.length === 0 && (
+                      <div className="sequence-list-empty">No sequences yet. Create one above.</div>
+                    )}
+                    {cadences.map(cadence => (
+                      <button key={cadence._id}
+                        className={`sequence-item ${selectedCadence?._id === cadence._id ? 'active' : ''}`}
+                        onClick={() => handleSelectCadence(cadence)}>
+                        <div className="sequence-item-top">
+                          <span className="sequence-item-name">{cadence.name}</span>
+                          <span className={`sequence-status-dot ${cadence.isActive ? 'active' : 'paused'}`}></span>
                         </div>
-                        <button 
-                          type="button" 
-                          className="btn btn-outline btn-sm csv-export-btn"
-                          onClick={() => {
-                            const headers = [
-                              { label: 'Barber', key: (p) => p.barber.name },
-                              { label: 'Role', key: (p) => p.barber.role },
-                              { label: 'Status', key: (p) => p.barber.isActive ? 'Active' : 'Inactive' },
-                              { label: 'Total Bookings', key: 'totalBookings' },
-                              { label: 'Unique Clients', key: 'uniqueClientsCount' },
-                              { label: 'Repeat Clients', key: 'repeatClientsCount' },
-                              { label: 'Return Rate (%)', key: 'returnRate' },
-                              { label: 'No-Show Rate (%)', key: 'noShowRate' },
-                              { label: 'Cancellation Rate (%)', key: 'cancellationRate' },
-                              { label: 'Total Revenue ($)', key: 'totalRevenue' }
-                            ];
-                            downloadCSV(reportsData.barberPerformance, headers, 'staff_performance_report.csv');
-                          }}
-                        >
-                          Export CSV
+                        <div className="sequence-item-meta">
+                          <span className="cadence-type-badge">{cadence.type.replace(/-/g, ' ')}</span>
+                          <span className="sequence-item-count">{cadence.stats?.activeEnrollments || 0} active</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Right: Sequence Detail */}
+                  {selectedCadence ? (
+                    <div className="sequence-detail">
+
+                      {/* Detail Header */}
+                      <div className="sequence-detail-header">
+                        <div>
+                          <h3 className="sequence-detail-name">{selectedCadence.name}</h3>
+                          <div className="sequence-detail-meta">
+                            <span className="cadence-type-badge">{selectedCadence.type.replace(/-/g, ' ')}</span>
+                            <span className="cadence-stat">{selectedCadence.stats?.totalEnrollments || 0} total</span>
+                            <span className="cadence-stat">{selectedCadence.stats?.totalMessagesSent || 0} sent</span>
+                          </div>
+                        </div>
+                        <div className="sequence-detail-actions">
+                          <button className={`btn btn-sm ${selectedCadence.isActive ? 'btn-gold' : 'btn-outline'}`}
+                            onClick={() => handleToggleCadence(selectedCadence)}>
+                            {selectedCadence.isActive ? '● Active' : '○ Paused'}
+                          </button>
+                          <button className="btn btn-ghost btn-sm" onClick={() => handleDeleteCadence(selectedCadence._id)}>Delete</button>
+                        </div>
+                      </div>
+
+                      {/* Sub-tabs */}
+                      <div className="outreach-subtabs">
+                        <button className={`outreach-subtab ${outreachSubTab === 'steps' ? 'active' : ''}`}
+                          onClick={() => setOutreachSubTab('steps')}>
+                          Steps ({selectedCadence.steps?.length || 0})
+                        </button>
+                        <button className={`outreach-subtab ${outreachSubTab === 'people' ? 'active' : ''}`}
+                          onClick={() => { setOutreachSubTab('people'); loadEnrollments(selectedCadence._id); }}>
+                          People ({selectedCadence.stats?.totalEnrollments || 0})
                         </button>
                       </div>
 
-                      <div className="table-responsive">
-                        <table className="retention-table reports-table">
-                          <thead>
-                            <tr>
-                              <th>Barber</th>
-                              <th>Role</th>
-                              <th>Status</th>
-                              <th>Total Bookings</th>
-                              <th>Unique Clients</th>
-                              <th>Repeat Clients</th>
-                              <th>Return Rate</th>
-                              <th>No-Show Rate</th>
-                              <th>Cancellation Rate</th>
-                              <th>Total Revenue</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reportsData.barberPerformance?.map(perf => (
-                              <tr key={perf.barber._id}>
-                                <td>
-                                  <div className="client-cell">
-                                    <img src={perf.barber.photo ? `${IMAGE_BASE}${perf.barber.photo}` : '/favicon.avif'} alt={perf.barber.name} className="barber-reports-avatar" />
-                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                      <strong>{perf.barber.name}</strong>
-                                      <span className="client-sub">{perf.barber.title || 'Barber'}</span>
+                      {/* Steps Sub-tab */}
+                      {outreachSubTab === 'steps' && (
+                        <div className="sequence-steps">
+                          {(selectedCadence.steps || []).sort((a, b) => a.order - b.order).map((step, idx) => (
+                            <div key={step._id || idx} className="sequence-step-row">
+                              <div className={`step-channel-icon ${step.channel}`}>
+                                {step.channel === 'voice' ? (
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.13 12 19.79 19.79 0 0 1 1.06 3.38 2 2 0 0 1 3.07 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                                ) : (
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                                )}
+                              </div>
+                              {idx < (selectedCadence.steps.length - 1) && <div className="step-row-connector"></div>}
+                              <div className="step-row-content">
+                                <div className="step-row-header">
+                                  <span className="step-timing-badge">{step.delayValue} {step.delayUnit} {step.delayDirection}</span>
+                                  <span className={`step-channel-tag ${step.channel}`}>{step.channel === 'voice' ? 'VOICE' : 'SMS'}</span>
+                                  {editingStep !== step._id && (
+                                    <div className="step-row-actions">
+                                      <button className="btn btn-outline btn-xs" onClick={() => {
+                                        setEditingStep(step._id);
+                                        setStepForm({ channel: step.channel || 'sms', delayValue: step.delayValue, delayUnit: step.delayUnit, delayDirection: step.delayDirection, messageTemplate: step.messageTemplate || '', voiceCallType: step.voiceCallType || 'confirmation' });
+                                      }}>Edit</button>
+                                      <button className="btn btn-ghost btn-xs" onClick={() => handleDeleteStep(step.order)}>×</button>
+                                    </div>
+                                  )}
+                                </div>
+                                {editingStep === step._id ? (
+                                  <div className="step-edit-form">
+                                    <div className="step-edit-row">
+                                      <select className="form-input" value={stepForm.channel} onChange={e => setStepForm(f => ({ ...f, channel: e.target.value }))}>
+                                        <option value="sms">SMS</option>
+                                        <option value="voice">Voice Call</option>
+                                      </select>
+                                      <input type="number" className="form-input" value={stepForm.delayValue} min="1" style={{ width: '70px' }}
+                                        onChange={e => setStepForm(f => ({ ...f, delayValue: Number(e.target.value) }))} />
+                                      <select className="form-input" value={stepForm.delayUnit} onChange={e => setStepForm(f => ({ ...f, delayUnit: e.target.value }))}>
+                                        <option value="minutes">min</option>
+                                        <option value="hours">hrs</option>
+                                        <option value="days">days</option>
+                                      </select>
+                                      <select className="form-input" value={stepForm.delayDirection} onChange={e => setStepForm(f => ({ ...f, delayDirection: e.target.value }))}>
+                                        <option value="before">before</option>
+                                        <option value="after">after</option>
+                                      </select>
+                                    </div>
+                                    {stepForm.channel === 'sms' ? (
+                                      <textarea className="form-input" rows="3" placeholder="Message... Use {{firstName}}, {{date}}, {{time}}" value={stepForm.messageTemplate}
+                                        onChange={e => setStepForm(f => ({ ...f, messageTemplate: e.target.value }))} />
+                                    ) : (
+                                      <select className="form-input" value={stepForm.voiceCallType} onChange={e => setStepForm(f => ({ ...f, voiceCallType: e.target.value }))}>
+                                        <option value="confirmation">Appointment Confirmation</option>
+                                        <option value="feedback">Post-Visit Feedback</option>
+                                        <option value="re-engagement">Re-engagement</option>
+                                      </select>
+                                    )}
+                                    <div className="step-edit-actions">
+                                      <button className="btn btn-gold btn-sm" onClick={() => handleSaveStep(step.order)}>Save</button>
+                                      <button className="btn btn-ghost btn-sm" onClick={() => setEditingStep(null)}>Cancel</button>
                                     </div>
                                   </div>
-                                </td>
-                                <td><span className="badge-role">{perf.barber.role}</span></td>
-                                <td>
-                                  <span className={`status-badge ${perf.barber.isActive ? 'active' : 'dormant'}`}>
-                                    {perf.barber.isActive ? 'Active' : 'Inactive'}
-                                  </span>
-                                </td>
-                                <td><span className="visit-badge">{perf.totalBookings} bookings</span></td>
-                                <td>{perf.uniqueClientsCount}</td>
-                                <td>{perf.repeatClientsCount}</td>
-                                <td>
-                                  <span className={`days-badge ${perf.returnRate >= 50 ? 'loyalty-high' : 'loyalty-low'}`}>
-                                    {perf.returnRate}%
-                                  </span>
-                                </td>
-                                <td>{perf.noShowRate}% ({perf.noShowCount})</td>
-                                <td>{perf.cancellationRate}% ({perf.cancelledCount})</td>
-                                <td><strong>${perf.totalRevenue?.toFixed(2) || '0.00'}</strong></td>
-                              </tr>
-                            ))}
-                            {(!reportsData.barberPerformance || reportsData.barberPerformance.length === 0) && (
-                              <tr>
-                                <td colSpan="10" style={{ textAlign: 'center', padding: '32px', color: 'var(--color-gray-400)' }}>
-                                  No staff performance records available.
-                                </td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Revenue Trends Table */}
-                  {activeReportTab === 'trends' && (
-                    <div className="retention-table-container animate-fade-in">
-                      <div className="table-header">
-                        <div>
-                          <h2>Salon Revenue Trends</h2>
-                          <p>Track daily bookings count and generated revenue salon-wide over time.</p>
-                        </div>
-                        <button 
-                          type="button" 
-                          className="btn btn-outline btn-sm csv-export-btn"
-                          onClick={() => {
-                            const headers = [
-                              { label: 'Date', key: 'date' },
-                              { label: 'Bookings Count', key: 'bookings' },
-                              { label: 'Total Revenue ($)', key: 'revenue' }
-                            ];
-                            downloadCSV(reportsData.revenueTrends, headers, 'revenue_trends_report.csv');
-                          }}
-                        >
-                          Export CSV
-                        </button>
-                      </div>
-
-                      <div className="table-responsive">
-                        <table className="retention-table reports-table">
-                          <thead>
-                            <tr>
-                              <th>Date</th>
-                              <th>Bookings Count</th>
-                              <th>Generated Revenue</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reportsData.revenueTrends?.map(trend => (
-                              <tr key={trend.date}>
-                                <td><strong>{trend.date}</strong></td>
-                                <td><span className="visit-badge">{trend.bookings} bookings</span></td>
-                                <td><strong>${trend.revenue?.toFixed(2) || '0.00'}</strong></td>
-                              </tr>
-                            ))}
-                            {(!reportsData.revenueTrends || reportsData.revenueTrends.length === 0) && (
-                              <tr>
-                                <td colSpan="3" style={{ textAlign: 'center', padding: '32px', color: 'var(--color-gray-400)' }}>
-                                  No revenue trends records available.
-                                </td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Service Popularity Table */}
-                  {activeReportTab === 'services' && (
-                    <div className="retention-table-container animate-fade-in">
-                      <div className="table-header">
-                        <div>
-                          <h2>Service Popularity & Performance</h2>
-                          <p>Analyze booking volume and generated revenue per service type to find the salon's most in-demand services.</p>
-                        </div>
-                        <button 
-                          type="button" 
-                          className="btn btn-outline btn-sm csv-export-btn"
-                          onClick={() => {
-                            const headers = [
-                              { label: 'Service Name', key: 'name' },
-                              { label: 'Category', key: 'category' },
-                              { label: 'Standard Price ($)', key: 'price' },
-                              { label: 'Bookings Count', key: 'bookingsCount' },
-                              { label: 'Total Revenue ($)', key: 'revenue' }
-                            ];
-                            downloadCSV(reportsData.servicePopularity, headers, 'service_popularity_report.csv');
-                          }}
-                        >
-                          Export CSV
-                        </button>
-                      </div>
-
-                      <div className="table-responsive">
-                        <table className="retention-table reports-table">
-                          <thead>
-                            <tr>
-                              <th>Service</th>
-                              <th>Category</th>
-                              <th>Standard Price</th>
-                              <th>Bookings Count</th>
-                              <th>Total Revenue</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reportsData.servicePopularity?.map(service => (
-                              <tr key={service.id}>
-                                <td><strong>{service.name}</strong></td>
-                                <td><span className="badge-role">{service.category?.replace('-', ' ')}</span></td>
-                                <td>${service.price?.toFixed(2) || '0.00'}</td>
-                                <td><span className="visit-badge">{service.bookingsCount} bookings</span></td>
-                                <td><strong>${service.revenue?.toFixed(2) || '0.00'}</strong></td>
-                              </tr>
-                            ))}
-                            {(!reportsData.servicePopularity || reportsData.servicePopularity.length === 0) && (
-                              <tr>
-                                <td colSpan="5" style={{ textAlign: 'center', padding: '32px', color: 'var(--color-gray-400)' }}>
-                                  No service popularity records available.
-                                </td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Location Comparison Table */}
-                  {activeReportTab === 'locations' && (
-                    <div className="retention-table-container animate-fade-in">
-                      <div className="table-header">
-                        <div>
-                          <h2>Location Performance Comparison</h2>
-                          <p>Compare booking volumes, client return rates, cancellation indices, and overall revenue side-by-side across locations.</p>
-                        </div>
-                        <button 
-                          type="button" 
-                          className="btn btn-outline btn-sm csv-export-btn"
-                          onClick={() => {
-                            const headers = [
-                              { label: 'Location Name', key: (l) => l.location.name },
-                              { label: 'City', key: (l) => l.location.city },
-                              { label: 'State', key: (l) => l.location.state },
-                              { label: 'Total Bookings', key: 'totalBookings' },
-                              { label: 'Unique Clients', key: 'uniqueClientsCount' },
-                              { label: 'Repeat Clients', key: 'repeatClientsCount' },
-                              { label: 'Return Rate (%)', key: 'returnRate' },
-                              { label: 'No-Show Rate (%)', key: 'noShowRate' },
-                              { label: 'Cancellation Rate (%)', key: 'cancellationRate' },
-                              { label: 'Total Revenue ($)', key: 'totalRevenue' }
-                            ];
-                            downloadCSV(reportsData.locationComparison, headers, 'location_comparison_report.csv');
-                          }}
-                        >
-                          Export CSV
-                        </button>
-                      </div>
-
-                      <div className="table-responsive">
-                        <table className="retention-table reports-table">
-                          <thead>
-                            <tr>
-                              <th>Location</th>
-                              <th>City / State</th>
-                              <th>Total Bookings</th>
-                              <th>Unique Clients</th>
-                              <th>Repeat Clients</th>
-                              <th>Return Rate</th>
-                              <th>No-Show Rate</th>
-                              <th>Cancellation Rate</th>
-                              <th>Total Revenue</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reportsData.locationComparison?.map(loc => (
-                              <tr key={loc.location._id}>
-                                <td><strong>{loc.location.name}</strong></td>
-                                <td>{loc.location.city}, {loc.location.state}</td>
-                                <td><span className="visit-badge">{loc.totalBookings} bookings</span></td>
-                                <td>{loc.uniqueClientsCount}</td>
-                                <td>{loc.repeatClientsCount}</td>
-                                <td>
-                                  <span className={`days-badge ${loc.returnRate >= 50 ? 'loyalty-high' : 'loyalty-low'}`}>
-                                    {loc.returnRate}%
-                                  </span>
-                                </td>
-                                <td>{loc.noShowRate}% ({loc.noShowCount})</td>
-                                <td>{loc.cancellationRate}% ({loc.cancelledCount})</td>
-                                <td><strong>${loc.totalRevenue?.toFixed(2) || '0.00'}</strong></td>
-                              </tr>
-                            ))}
-                            {(!reportsData.locationComparison || reportsData.locationComparison.length === 0) && (
-                              <tr>
-                                <td colSpan="9" style={{ textAlign: 'center', padding: '32px', color: 'var(--color-gray-400)' }}>
-                                  No location comparison records available.
-                                </td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Audit Notice Box */}
-                  <div className="audit-notice-container">
-                    <h4>Legacy Calculation Audit Correction Notice</h4>
-                    <p>
-                      Unlike legacy salon reporting platforms (which calculate return rates using total booking counts or include cancelled/no-show appointments, resulting in inflated repeat visitor metrics or division-by-zero <code>NaN</code> bugs for new staff members), the Elegance Performance Report strictly filters for unique clients with 2 or more confirmed or completed visits, and returns 0% when there are no clients.
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* TAB 8: OUTREACH CADENCES */}
-          {activeTab === 'outreach' && (
-            <div className="tab-pane animate-fade-in">
-              {cadencesLoading ? (
-                <div className="retention-loading">Loading outreach cadences...</div>
-              ) : cadences.length === 0 ? (
-                <div className="retention-empty">No outreach cadences configured. Run the seed script to create the default pre-appointment reminder flow.</div>
-              ) : (
-                <>
-                  {cadences.map(cadence => (
-                    <div key={cadence._id} className="cadence-card">
-                      <div className="cadence-card-header">
-                        <div className="cadence-header-left">
-                          <h2 className="cadence-name">{cadence.name}</h2>
-                          <span className="cadence-type-badge">{cadence.type.replace('-', ' ')}</span>
-                        </div>
-                        <div className="cadence-header-right">
-                          <div className="cadence-stats-row">
-                            <span className="cadence-stat">{cadence.stats?.totalEnrollments || 0} enrolled</span>
-                            <span className="cadence-stat">{cadence.stats?.totalMessagesSent || 0} sent</span>
-                            <span className="cadence-stat">{cadence.stats?.completedEnrollments || 0} completed</span>
-                          </div>
-                          <button
-                            className={`btn btn-sm ${cadence.isActive ? 'btn-gold' : 'btn-outline'}`}
-                            onClick={() => handleToggleCadence(cadence)}>
-                            {cadence.isActive ? 'Active' : 'Paused'}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Visual Step Timeline */}
-                      <div className="cadence-timeline">
-                        {cadence.steps.sort((a, b) => a.order - b.order).map((step, idx) => (
-                          <div key={step._id || idx} className="cadence-step-node">
-                            <div className="step-connector-line"></div>
-                            <div className="step-icon-circle">
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                              </svg>
-                            </div>
-                            <div className="step-content">
-                              <div className="step-timing-badge">
-                                {step.delayValue} {step.delayUnit} {step.delayDirection} appointment
+                                ) : (
+                                  <div className="step-message-preview">
+                                    {step.channel === 'voice'
+                                      ? <em>Voice: {(step.voiceCallType || 're-engagement').replace(/-/g, ' ')} call</em>
+                                      : step.messageTemplate}
+                                  </div>
+                                )}
                               </div>
-                              <div className="step-channel-tag">SMS</div>
+                            </div>
+                          ))}
 
-                              {editingStep === step.order ? (
+                          {addingStep ? (
+                            <div className="sequence-step-row add-step-row">
+                              <div className={`step-channel-icon ${stepForm.channel}`}>
+                                {stepForm.channel === 'voice' ? (
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.13 12 19.79 19.79 0 0 1 1.06 3.38 2 2 0 0 1 3.07 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                                ) : (
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                                )}
+                              </div>
+                              <div className="step-row-content">
                                 <div className="step-edit-form">
                                   <div className="step-edit-row">
-                                    <input type="number" className="form-input" value={stepForm.delayValue}
-                                      onChange={e => setStepForm(f => ({ ...f, delayValue: Number(e.target.value) }))} style={{ width: '80px' }} />
-                                    <select className="form-input" value={stepForm.delayUnit}
-                                      onChange={e => setStepForm(f => ({ ...f, delayUnit: e.target.value }))}>
-                                      <option value="hours">hours</option>
-                                      <option value="minutes">minutes</option>
+                                    <select className="form-input" value={stepForm.channel} onChange={e => setStepForm(f => ({ ...f, channel: e.target.value }))}>
+                                      <option value="sms">SMS</option>
+                                      <option value="voice">Voice Call</option>
                                     </select>
-                                    <span>before appointment</span>
+                                    <input type="number" className="form-input" value={stepForm.delayValue} min="1" style={{ width: '70px' }}
+                                      onChange={e => setStepForm(f => ({ ...f, delayValue: Number(e.target.value) }))} />
+                                    <select className="form-input" value={stepForm.delayUnit} onChange={e => setStepForm(f => ({ ...f, delayUnit: e.target.value }))}>
+                                      <option value="minutes">min</option>
+                                      <option value="hours">hrs</option>
+                                      <option value="days">days</option>
+                                    </select>
+                                    <select className="form-input" value={stepForm.delayDirection} onChange={e => setStepForm(f => ({ ...f, delayDirection: e.target.value }))}>
+                                      <option value="before">before</option>
+                                      <option value="after">after</option>
+                                    </select>
                                   </div>
-                                  <textarea className="form-input" rows="3" value={stepForm.messageTemplate}
-                                    onChange={e => setStepForm(f => ({ ...f, messageTemplate: e.target.value }))} />
+                                  {stepForm.channel === 'sms' ? (
+                                    <textarea className="form-input" rows="3" placeholder="Message... Use {{firstName}}, {{date}}, {{time}}" value={stepForm.messageTemplate}
+                                      onChange={e => setStepForm(f => ({ ...f, messageTemplate: e.target.value }))} />
+                                  ) : (
+                                    <select className="form-input" value={stepForm.voiceCallType} onChange={e => setStepForm(f => ({ ...f, voiceCallType: e.target.value }))}>
+                                      <option value="confirmation">Appointment Confirmation</option>
+                                      <option value="feedback">Post-Visit Feedback</option>
+                                      <option value="re-engagement">Re-engagement</option>
+                                    </select>
+                                  )}
                                   <div className="step-edit-actions">
-                                    <button className="btn btn-gold btn-sm" onClick={() => handleSaveStep(cadence, step.order)}>Save</button>
-                                    <button className="btn btn-ghost btn-sm" onClick={() => setEditingStep(null)}>Cancel</button>
+                                    <button className="btn btn-gold btn-sm" onClick={handleAddStep}>Add Step</button>
+                                    <button className="btn btn-ghost btn-sm" onClick={() => setAddingStep(false)}>Cancel</button>
                                   </div>
                                 </div>
-                              ) : (
-                                <>
-                                  <p className="step-message-preview">{step.messageTemplate}</p>
-                                  <button className="btn btn-outline btn-sm" onClick={() => {
-                                    setEditingStep(step.order);
-                                    setStepForm({ delayValue: step.delayValue, delayUnit: step.delayUnit, messageTemplate: step.messageTemplate });
-                                  }}>Edit Step</button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Enrollment Log */}
-                      <div className="cadence-enrollments-section">
-                        <button className="btn btn-outline btn-sm" onClick={() => {
-                          if (selectedCadence === cadence._id) {
-                            setSelectedCadence(null);
-                            setCadenceEnrollments([]);
-                          } else {
-                            setSelectedCadence(cadence._id);
-                            loadEnrollments(cadence._id);
-                          }
-                        }}>
-                          {selectedCadence === cadence._id ? 'Hide Enrollment Log' : 'View Enrollment Log'}
-                        </button>
-
-                        {selectedCadence === cadence._id && (
-                          <div className="enrollment-log">
-                            {enrollmentsLoading ? (
-                              <p className="retention-loading">Loading enrollments...</p>
-                            ) : cadenceEnrollments.length === 0 ? (
-                              <p className="retention-empty">No enrollments yet. Appointments will auto-enroll when booked.</p>
-                            ) : (
-                              <div className="table-responsive">
-                                <table className="retention-table">
-                                  <thead>
-                                    <tr>
-                                      <th>Client</th>
-                                      <th>Appointment</th>
-                                      <th>Status</th>
-                                      <th>Steps</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {cadenceEnrollments.map(enr => (
-                                      <tr key={enr._id}>
-                                        <td>
-                                          <div className="client-cell">
-                                            <strong>{enr.clientId?.firstName} {enr.clientId?.lastName}</strong>
-                                            <span className="client-sub">{enr.clientId?.phone}</span>
-                                          </div>
-                                        </td>
-                                        <td>{enr.appointmentId?.date} at {enr.appointmentId?.startTime}</td>
-                                        <td>
-                                          <span className={`status-badge ${enr.status}`}>{enr.status}</span>
-                                        </td>
-                                        <td>
-                                          <div className="step-status-dots">
-                                            {enr.stepExecutions?.map((se, i) => (
-                                              <span key={i} className={`step-dot ${se.status}`} title={`Step ${se.stepOrder}: ${se.status}${se.executedAt ? ' at ' + dayjs(se.executedAt).format('MMM D h:mm A') : ''}`}></span>
-                                            ))}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
                               </div>
-                            )}
+                            </div>
+                          ) : (
+                            <button className="btn btn-outline btn-sm add-step-btn" onClick={() => {
+                              setAddingStep(true);
+                              setStepForm({ channel: 'sms', delayValue: 24, delayUnit: 'hours', delayDirection: 'after', messageTemplate: '', voiceCallType: 'confirmation' });
+                            }}>
+                              + Add Step
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* People Sub-tab */}
+                      {outreachSubTab === 'people' && (
+                        <div className="sequence-people">
+                          <div className="people-toolbar">
+                            <span style={{ color: 'var(--color-gray-500)', fontSize: '0.85em' }}>
+                              {cadenceEnrollments.length} enrolled
+                            </span>
+                            <button className="btn btn-gold btn-sm" onClick={() => { loadSalonTags(); setEnrollSelectedClients([]); setEnrollTag(''); setOutreachMessage({ type: '', text: '' }); setShowEnrollModal(true); }}>
+                              Enroll Clients
+                            </button>
                           </div>
-                        )}
-                      </div>
+                          {enrollmentsLoading ? (
+                            <div className="retention-loading">Loading...</div>
+                          ) : cadenceEnrollments.length === 0 ? (
+                            <div className="retention-empty">No one enrolled yet. Click "Enroll Clients" to add people to this sequence.</div>
+                          ) : (
+                            <div className="table-responsive">
+                              <table className="retention-table">
+                                <thead>
+                                  <tr>
+                                    <th>Client</th>
+                                    <th>Enrolled</th>
+                                    <th>Source</th>
+                                    <th>Status</th>
+                                    <th>Progress</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {cadenceEnrollments.map(enr => (
+                                    <tr key={enr._id}>
+                                      <td>
+                                        <div className="client-cell">
+                                          <strong>{enr.clientId?.firstName} {enr.clientId?.lastName}</strong>
+                                          <span className="client-sub">{enr.clientId?.phone}</span>
+                                        </div>
+                                      </td>
+                                      <td style={{ fontSize: '0.8em', color: 'var(--color-gray-500)' }}>{dayjs(enr.createdAt).format('MMM D')}</td>
+                                      <td>
+                                        <span className="cadence-type-badge" style={enr.source === 'manual' ? { background: 'rgba(99,102,241,0.1)', color: '#4338CA' } : {}}>
+                                          {enr.source || 'auto'}
+                                        </span>
+                                      </td>
+                                      <td><span className={`status-badge ${enr.status}`}>{enr.status}</span></td>
+                                      <td>
+                                        <div className="step-status-dots">
+                                          {enr.stepExecutions?.map((se, i) => (
+                                            <span key={i} className={`step-dot ${se.status}`}
+                                              title={`Step ${se.stepOrder}: ${se.status}${se.executedAt ? ' · ' + dayjs(se.executedAt).format('MMM D h:mm A') : ''}`}></span>
+                                          ))}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  ))}
-                </>
+                  ) : (
+                    <div className="sequence-detail sequence-empty-state">
+                      <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'var(--color-gray-300)', marginBottom: '12px' }}>
+                        <path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path>
+                      </svg>
+                      <p style={{ color: 'var(--color-gray-400)', margin: 0 }}>Select a sequence to view and edit it</p>
+                    </div>
+                  )}
+                </div>
               )}
-            </div>
-          )}
-
-          {/* TAB 8: AI VOICE AGENT & CALL LOGS */}
-          {activeTab === 'voice' && (
-            <div className="tab-pane voice-pane animate-fade-in">
-              <div className="voice-dashboard-grid">
-                
-                {/* Trigger Manual Call Panel */}
-                <div className="voice-card trigger-card">
-                  <h3>Initiate Outbound Call</h3>
-                  <form onSubmit={handleTriggerVoiceCall}>
-                    <div className="form-group" style={{ marginBottom: '16px' }}>
-                      <label className="form-label">Select Client</label>
-                      <select 
-                        className="form-input form-select"
-                        value={triggerCallForm.clientId}
-                        onChange={e => setTriggerCallForm(f => ({ ...f, clientId: e.target.value }))}
-                        required
-                      >
-                        <option value="">-- Choose Client --</option>
-                        {clients.map(c => (
-                          <option key={c._id} value={c._id}>{c.firstName} {c.lastName} ({c.phone})</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="form-group" style={{ marginBottom: '16px' }}>
-                      <label className="form-label">Call Purpose</label>
-                      <select 
-                        className="form-input form-select"
-                        value={triggerCallForm.type}
-                        onChange={e => setTriggerCallForm(f => ({ ...f, type: e.target.value }))}
-                        required
-                      >
-                        <option value="confirmation">Appointment Confirmation</option>
-                        <option value="feedback">Post-Visit Feedback Collection</option>
-                        <option value="re-engagement">Dormant Client Re-engagement</option>
-                      </select>
-                    </div>
-
-                    {triggerCallForm.type === 'confirmation' && (
-                      <div className="form-group" style={{ marginBottom: '16px' }}>
-                        <label className="form-label">Select Appointment</label>
-                        <select 
-                          className="form-input form-select"
-                          value={triggerCallForm.appointmentId}
-                          onChange={e => setTriggerCallForm(f => ({ ...f, appointmentId: e.target.value }))}
-                          required={triggerCallForm.type === 'confirmation'}
-                        >
-                          <option value="">-- Choose Appointment --</option>
-                          {appointments
-                            .filter(a => a.clientId?._id === triggerCallForm.clientId || a.clientId === triggerCallForm.clientId)
-                            .map(a => (
-                              <option key={a._id} value={a._id}>
-                                {a.date} at {dayjs(`2024-01-01 ${a.startTime}`).format('h:mm A')} - {a.serviceId?.name || 'Service'}
-                              </option>
-                            ))
-                          }
-                        </select>
-                        {appointments.filter(a => a.clientId?._id === triggerCallForm.clientId || a.clientId === triggerCallForm.clientId).length === 0 && triggerCallForm.clientId && (
-                          <small style={{ color: '#DC2626', marginTop: '4px', display: 'block' }}>
-                            No appointments found for this client to confirm.
-                          </small>
-                        )}
-                      </div>
-                    )}
-
-                    {voiceTabMessage.text && (
-                      <div className={`alert-banner ${voiceTabMessage.type === 'error' ? 'error-banner' : 'success-banner'}`} style={{ marginBottom: '16px', padding: '10px', borderRadius: '4px', fontSize: '0.85em', background: voiceTabMessage.type === 'error' ? 'rgba(220, 38, 38, 0.05)' : 'rgba(34, 197, 94, 0.05)', color: voiceTabMessage.type === 'error' ? '#DC2626' : '#16A34A', border: `1px solid ${voiceTabMessage.type === 'error' ? '#FCA5A5' : '#86EFAC'}` }}>
-                        {voiceTabMessage.text}
-                      </div>
-                    )}
-
-                    <button 
-                      type="submit" 
-                      className="btn btn-gold btn-lg" 
-                      style={{ width: '100%' }}
-                      disabled={voiceLoading}
-                    >
-                      {voiceLoading ? 'Triggering Call...' : 'Initiate Outbound Call'}
-                    </button>
-                  </form>
-                </div>
-
-                {/* Call Logs Panel */}
-                <div className="voice-card logs-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                    <h3 style={{ margin: 0, fontSize: '1.1em', fontFamily: 'var(--font-display)' }}>Outbound Call Logs</h3>
-                    <button className="btn btn-outline btn-sm" onClick={loadCallLogs} disabled={voiceLoading}>
-                      Refresh Logs
-                    </button>
-                  </div>
-
-                  <div className="table-responsive">
-                    <table className="clients-table">
-                      <thead>
-                        <tr>
-                          <th>Client</th>
-                          <th>Type</th>
-                          <th>Status</th>
-                          <th>Outcome</th>
-                          <th>Duration</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {callLogs.map(log => (
-                          <tr key={log._id}>
-                            <td>
-                              <strong>{log.clientId?.firstName} {log.clientId?.lastName}</strong>
-                              <div style={{ fontSize: '0.8em', color: 'var(--color-gray-400)' }}>{log.clientId?.phone}</div>
-                            </td>
-                            <td style={{ textTransform: 'capitalize' }}>{log.type}</td>
-                            <td>
-                              <span className={`status-pill ${log.status}`}>
-                                {log.status}
-                              </span>
-                            </td>
-                            <td>
-                              <strong style={{ fontSize: '0.9em' }}>{log.outcome || 'Pending'}</strong>
-                            </td>
-                            <td>{log.duration}s</td>
-                            <td>
-                              <button className="btn btn-outline btn-sm" onClick={() => handleOpenCallDetails(log)}>
-                                Transcript
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                        {callLogs.length === 0 && (
-                          <tr>
-                            <td colSpan="6" style={{ textAlign: 'center', padding: '32px', color: 'var(--color-gray-400)' }}>
-                              No outbound call logs found.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-              </div>
             </div>
           )}
 
@@ -2162,15 +2217,25 @@ export default function AdminCalendarPage() {
           <div className="copilot-header">
             <div className="copilot-header-info">
               <h3>Elegance Copilot</h3>
-              <span className="copilot-status">Online · database Access</span>
+              <span className="copilot-status">Online · Database Access</span>
             </div>
-            <button className="copilot-close" onClick={() => setShowCopilot(false)}>✕</button>
+            <div className="copilot-header-actions">
+              <button className="copilot-clear" onClick={handleClearChat} title="Clear chat">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" />
+                </svg>
+              </button>
+              <button className="copilot-close" onClick={() => setShowCopilot(false)}>✕</button>
+            </div>
           </div>
 
           <div className="copilot-messages">
             {chatHistory.map((chat, idx) => (
               <div key={idx} className={`chat-bubble ${chat.sender}`}>
-                <p className="chat-text">{chat.text}</p>
+                {chat.sender === 'bot'
+                  ? <div className="chat-text">{renderBotText(chat.text)}</div>
+                  : <p className="chat-text" style={{ margin: 0 }}>{chat.text}</p>
+                }
                 {chat.actions && chat.actions.map((act, actIdx) => {
                   if (act.type === 'cancel_appointment') {
                     return (
@@ -2226,8 +2291,8 @@ export default function AdminCalendarPage() {
               onChange={e => setCopilotInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSendCopilot()}
             />
-             <button className={`copilot-mic ${isListening ? 'listening' : ''}`} onClick={handleToggleListening} title="Voice Command">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" style={{ display: 'block', margin: 'auto' }}><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+            <button className={`copilot-mic ${isListening ? 'listening' : ''}`} onClick={handleToggleListening} title="Voice Command">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
             </button>
             <button className="btn btn-gold copilot-send" onClick={() => handleSendCopilot()}>Send</button>
           </div>
@@ -2235,108 +2300,184 @@ export default function AdminCalendarPage() {
       </div>
 
       {/* Appointment Detail Panel */}
-      {selectedAppointment && (
-        <div className="detail-overlay" onClick={() => setSelectedAppointment(null)}>
-          <div className="detail-panel animate-slide-in" onClick={e => e.stopPropagation()}>
-            <div className="detail-header">
-              <h3>Appointment Details</h3>
-              <button className="btn btn-ghost" onClick={() => setSelectedAppointment(null)}>✕</button>
-            </div>
+      {/* Appointment Detail Panel */}
+      {selectedAppointment && (() => {
+        const clientFirstName = selectedAppointment.clientId?.firstName || selectedAppointment.firstName || 'Client';
+        const clientLastName = selectedAppointment.clientId?.lastName || selectedAppointment.lastName || '';
+        const clientFullName = `${clientFirstName} ${clientLastName}`;
+        const clientPhone = selectedAppointment.clientId?.phone || selectedAppointment.phone || '';
+        const clientEmail = selectedAppointment.clientId?.email || selectedAppointment.email || '';
+        const initials = `${clientFirstName.charAt(0)}${clientLastName.charAt(0)}`.toUpperCase() || 'C';
+        
+        return (
+          <div className="detail-overlay" onClick={() => setSelectedAppointment(null)}>
+            <div className="detail-panel animate-slide-in" onClick={e => e.stopPropagation()}>
+              <div className="detail-header">
+                <div className="detail-header-title-wrapper">
+                  <h3>Appointment Details</h3>
+                  <span className={`detail-header-source-tag source-${selectedAppointment.source}`}>
+                    via {selectedAppointment.source}
+                  </span>
+                </div>
+                <button className="detail-close-btn" onClick={() => setSelectedAppointment(null)}>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
 
-            <div className="detail-body">
-              <div className="detail-section">
-                <h4>Client</h4>
-                <p className="detail-value">
-                  {selectedAppointment.clientId?.firstName || selectedAppointment.firstName || 'Client'}{' '}
-                  {selectedAppointment.clientId?.lastName || selectedAppointment.lastName || ''}
-                </p>
-                <p className="detail-sub">{selectedAppointment.clientId?.phone || selectedAppointment.phone}</p>
-                {(selectedAppointment.clientId?.email || selectedAppointment.email) && (
-                  <p className="detail-sub">{selectedAppointment.clientId?.email || selectedAppointment.email}</p>
+              <div className="detail-body">
+                {/* 1. Client Card */}
+                <div className="detail-card client-card">
+                  <div className="client-avatar-circle">
+                    {initials}
+                  </div>
+                  <div className="client-card-info">
+                    <span className="detail-card-label">Client</span>
+                    <h4 className="client-name">{clientFullName}</h4>
+                    <div className="client-contact-row">
+                      {clientPhone && (
+                        <a href={`tel:${clientPhone}`} className="contact-link" title="Call Client">
+                          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                          <span>{clientPhone}</span>
+                        </a>
+                      )}
+                      {clientEmail && (
+                        <a href={`mailto:${clientEmail}`} className="contact-link" title="Email Client">
+                          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                          <span>{clientEmail}</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Service & Pricing Card */}
+                <div className="detail-card service-card">
+                  <div className="detail-card-left">
+                    <span className="detail-card-label">Service</span>
+                    <h4 className="service-name">{selectedAppointment.serviceId?.name || 'Hair Service'}</h4>
+                    <div className="service-duration-row">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                      <span>{selectedAppointment.serviceId?.duration || 30} min</span>
+                    </div>
+                  </div>
+                  <div className="detail-card-right price-tag">
+                    ${(selectedAppointment.serviceId?.price / 100).toFixed(0)}
+                  </div>
+                </div>
+
+                {/* 3. Barber Card */}
+                <div className="detail-card staff-card-details">
+                  <img 
+                    src={selectedAppointment.barberId?.photo ? (selectedAppointment.barberId.photo.startsWith('http') ? selectedAppointment.barberId.photo : `${IMAGE_BASE}${selectedAppointment.barberId.photo}`) : '/favicon.avif'} 
+                    alt={selectedAppointment.barberId?.name} 
+                    className="staff-avatar-circle"
+                  />
+                  <div className="staff-card-info">
+                    <span className="detail-card-label">Barber</span>
+                    <h4 className="staff-name">{selectedAppointment.barberId?.name}</h4>
+                    <p className="staff-title">{selectedAppointment.barberId?.title || 'Professional Barber'}</p>
+                  </div>
+                </div>
+
+                {/* 4. Date & Time Card */}
+                <div className="detail-card datetime-card">
+                  <div className="datetime-icon-box">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                  </div>
+                  <div className="datetime-info">
+                    <span className="detail-card-label">Date & Time</span>
+                    <h4 className="datetime-date">{dayjs(selectedAppointment.date).format('dddd, MMMM D, YYYY')}</h4>
+                    <p className="datetime-time">
+                      {dayjs(`2024-01-01 ${selectedAppointment.startTime}`).format('h:mm A')} –{' '}
+                      {dayjs(`2024-01-01 ${selectedAppointment.endTime}`).format('h:mm A')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 5. Status Card */}
+                <div className="detail-card status-card">
+                  <span className="detail-card-label">Status</span>
+                  <div className="status-pills-container">
+                    {['confirmed', 'completed', 'no-show', 'cancelled'].map(s => (
+                      <button key={s}
+                        className={`status-pill-btn pill-${s} ${selectedAppointment.status === s ? 'active' : ''}`}
+                        onClick={() => handleStatusChange(selectedAppointment._id, s)}>
+                        <span className="status-dot" />
+                        {s.replace('-', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 6. Haircut Style Card */}
+                {selectedAppointment.haircutStyle && (
+                  <div className="detail-card style-card">
+                    <span className="detail-card-label">Selected Haircut Style</span>
+                    <div className="style-tag-wrapper">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                      <span className="style-tag-text">{selectedAppointment.haircutStyle.replace(/-/g, ' ')}</span>
+                    </div>
+                  </div>
                 )}
-              </div>
 
-              <div className="detail-section">
-                <h4>Service</h4>
-                <p className="detail-value">{selectedAppointment.serviceId?.name}</p>
-                <p className="detail-sub">{selectedAppointment.serviceId?.duration}min · ${(selectedAppointment.serviceId?.price / 100).toFixed(0)}</p>
-              </div>
+                {/* 7. Reference Photo / Attachment Card */}
+                <div className="detail-card attachment-card">
+                  <span className="detail-card-label">Reference Photo</span>
+                  {selectedAppointment.referencePhoto ? (
+                    <div className="detail-photo-container">
+                      <img
+                        src={selectedAppointment.referencePhoto.startsWith('http') ? selectedAppointment.referencePhoto : `${IMAGE_BASE}${selectedAppointment.referencePhoto}`}
+                        alt="Reference style"
+                        className="ref-photo-img"
+                      />
+                      <button className="photo-delete-overlay-btn" onClick={() => handleRemovePhoto(selectedAppointment._id)} title="Remove Photo">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        <span>Remove Photo</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="premium-upload-zone">
+                      <label className="upload-label-wrapper">
+                        <input type="file" accept="image/*" onChange={e => handlePhotoUpload(selectedAppointment._id, e)} hidden />
+                        <div className="upload-icon-circle">
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        </div>
+                        <span className="upload-prompt">Upload Reference Photo</span>
+                        <span className="upload-subtext">Click to browse device files</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
 
-              <div className="detail-section">
-                <h4>Barber</h4>
-                <p className="detail-value">{selectedAppointment.barberId?.name}</p>
-                <p className="detail-sub">{selectedAppointment.barberId?.title}</p>
-              </div>
-
-              <div className="detail-section">
-                <h4>Date & Time</h4>
-                <p className="detail-value">{dayjs(selectedAppointment.date).format('ddd, MMM D, YYYY')}</p>
-                <p className="detail-sub">
-                  {dayjs(`2024-01-01 ${selectedAppointment.startTime}`).format('h:mm A')} –{' '}
-                  {dayjs(`2024-01-01 ${selectedAppointment.endTime}`).format('h:mm A')}
-                </p>
-              </div>
-
-              <div className="detail-section">
-                <h4>Status</h4>
-                <div className="status-buttons">
-                  {['confirmed', 'completed', 'no-show', 'cancelled'].map(s => (
-                    <button key={s}
-                      className={`btn btn-sm ${selectedAppointment.status === s ? 'active-status' : 'btn-outline'}`}
-                      onClick={() => handleStatusChange(selectedAppointment._id, s)}>
-                      {s.replace('-', ' ')}
-                    </button>
-                  ))}
+                {/* 8. Notes Card */}
+                <div className="detail-card notes-card">
+                  <span className="detail-card-label">Appointment Notes</span>
+                  <textarea 
+                    className="premium-notes-textarea"
+                    defaultValue={selectedAppointment.notes}
+                    placeholder="Type appointment details, hair preferences or special requests here..."
+                    onBlur={e => handleNotesUpdate(selectedAppointment._id, e.target.value)} 
+                  />
                 </div>
               </div>
 
-              {selectedAppointment.haircutStyle && (
-                <div className="detail-section">
-                  <h4>Haircut Style</h4>
-                  <span className="spec-tag">{selectedAppointment.haircutStyle.replace(/-/g, ' ')}</span>
+              {/* 9. Meta Info Footer */}
+              <div className="detail-footer-meta">
+                <div className="meta-row">
+                  <span className="meta-label">SMS Reminder</span>
+                  <span className={`meta-value sms-status-${selectedAppointment.smsConfirmationSent ? 'sent' : 'failed'}`}>
+                    {selectedAppointment.smsConfirmationSent ? 'Confirmed & Sent' : 'Not Sent / Pending'}
+                  </span>
                 </div>
-              )}
-
-              <div className="detail-section">
-                <h4>Reference Photo / Attachment</h4>
-                {selectedAppointment.referencePhoto ? (
-                  <div className="detail-photo-wrapper">
-                    <img
-                      src={selectedAppointment.referencePhoto.startsWith('http') ? selectedAppointment.referencePhoto : `${IMAGE_BASE}${selectedAppointment.referencePhoto}`}
-                      alt="Reference"
-                      className="ref-photo"
-                    />
-                    <button className="btn btn-sm btn-outline btn-danger mt-2" onClick={() => handleRemovePhoto(selectedAppointment._id)}>
-                      Remove Photo
-                    </button>
-                  </div>
-                ) : (
-                  <div className="photo-upload-container">
-                    <label className="photo-upload-label">
-                      <input type="file" accept="image/*" onChange={e => handlePhotoUpload(selectedAppointment._id, e)} hidden />
-                      <span className="upload-btn">＋ Add/Upload Photo</span>
-                    </label>
-                  </div>
-                )}
-              </div>
-
-              <div className="detail-section">
-                <h4>Notes</h4>
-                <textarea className="form-input notes-input"
-                  defaultValue={selectedAppointment.notes}
-                  placeholder="Add notes about this appointment..."
-                  onBlur={e => handleNotesUpdate(selectedAppointment._id, e.target.value)} />
-              </div>
-
-              <div className="detail-section detail-meta">
-                <small>Source: {selectedAppointment.source}</small>
-                <small>SMS Status: {selectedAppointment.smsConfirmationSent ? 'Sent' : 'Failed / Not Sent'}</small>
-                <small>Created: {dayjs(selectedAppointment.createdAt).format('MMM D, h:mm A')}</small>
+                <div className="meta-row">
+                  <span className="meta-label">Created on</span>
+                  <span className="meta-value">{dayjs(selectedAppointment.createdAt).format('MMMM D, YYYY [at] h:mm A')}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Add Appointment Modal */}
       {showAddModal && (
@@ -2569,6 +2710,34 @@ export default function AdminCalendarPage() {
                 <label className="form-label">Administrative Notes</label>
                 <textarea className="form-input" value={clientForm.notes} rows="3"
                   onChange={e => setClientForm(f => ({ ...f, notes: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Tags</label>
+                <div className="tag-input-row">
+                  {(clientForm.tags || []).map(tag => (
+                    <span key={tag} className="tag-pill active">
+                      {tag}
+                      <button className="tag-remove" type="button" onClick={() => setClientForm(f => ({ ...f, tags: f.tags.filter(t => t !== tag) }))}>×</button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    className="tag-add-input"
+                    placeholder="Add tag, press Enter"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={e => {
+                      if ((e.key === 'Enter' || e.key === ',') && tagInput.trim()) {
+                        e.preventDefault();
+                        const tag = tagInput.trim().toLowerCase().replace(/,/g, '');
+                        if (tag && !(clientForm.tags || []).includes(tag)) {
+                          setClientForm(f => ({ ...f, tags: [...(f.tags || []), tag] }));
+                        }
+                        setTagInput('');
+                      }
+                    }}
+                  />
+                </div>
               </div>
               <div className="form-group checkbox-group">
                 <input type="checkbox" id="isTrustedClient" checked={clientForm.isTrusted}
@@ -2932,85 +3101,106 @@ export default function AdminCalendarPage() {
         </div>
       )}
 
-      {/* AI Voice Call Details / Transcript Modal */}
-      {showCallDetailsModal && selectedCallLog && (
-        <div className="detail-overlay" onClick={() => setShowCallDetailsModal(false)}>
-          <div className="detail-panel add-modal sms-modal animate-slide-in" onClick={e => e.stopPropagation()} style={{ width: '500px', maxWidth: '90vw' }}>
+      {/* Enroll Clients Modal */}
+      {showEnrollModal && selectedCadence && (
+        <div className="detail-overlay" onClick={() => setShowEnrollModal(false)}>
+          <div className="detail-panel add-modal sms-modal animate-slide-in" onClick={e => e.stopPropagation()} style={{ width: '480px', maxWidth: '90vw' }}>
             <div className="detail-header">
-              <h3>Voice Call Details</h3>
-              <button className="btn btn-ghost" onClick={() => setShowCallDetailsModal(false)}>✕</button>
+              <h3>Enroll into "{selectedCadence.name}"</h3>
+              <button className="btn btn-ghost" onClick={() => setShowEnrollModal(false)}>✕</button>
             </div>
-            <div className="detail-body" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100% - 60px)', padding: '20px' }}>
-              
-              {/* Metadata summary */}
-              <div className="call-metadata-summary" style={{ padding: '12px', background: 'var(--color-bg-light)', borderRadius: '6px', border: '1px solid var(--color-border)', marginBottom: '16px', fontSize: '0.9em' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ color: 'var(--color-gray-400)' }}>Client:</span>
-                  <strong>{selectedCallLog.clientId?.firstName} {selectedCallLog.clientId?.lastName}</strong>
+            <div className="detail-body" style={{ padding: '20px' }}>
+              {outreachMessage.text && (
+                <div style={{ marginBottom: '16px', padding: '10px', borderRadius: '4px', fontSize: '0.85em', background: outreachMessage.type === 'error' ? 'rgba(220,38,38,0.05)' : 'rgba(34,197,94,0.05)', color: outreachMessage.type === 'error' ? '#DC2626' : '#16A34A', border: `1px solid ${outreachMessage.type === 'error' ? '#FCA5A5' : '#86EFAC'}` }}>
+                  {outreachMessage.text}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ color: 'var(--color-gray-400)' }}>Purpose:</span>
-                  <span style={{ textTransform: 'capitalize', fontWeight: '500' }}>{selectedCallLog.type} Call</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ color: 'var(--color-gray-400)' }}>Outcome:</span>
-                  <strong style={{ color: 'var(--color-gold)' }}>{selectedCallLog.outcome || 'Pending'}</strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ color: 'var(--color-gray-400)' }}>Duration:</span>
-                  <span>{selectedCallLog.duration} seconds</span>
-                </div>
-                {selectedCallLog.summary && (
-                  <div style={{ marginTop: '8px', borderTop: '1px solid var(--color-border)', paddingTop: '8px' }}>
-                    <span style={{ color: 'var(--color-gray-400)', display: 'block', marginBottom: '2px', fontSize: '0.85em' }}>AI Call Summary:</span>
-                    <p style={{ margin: 0, fontStyle: 'italic', fontSize: '0.9em', lineHeight: '1.4' }}>"{selectedCallLog.summary}"</p>
-                  </div>
-                )}
+              )}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+                <button className={`btn btn-sm ${enrollMode === 'tag' ? 'btn-gold' : 'btn-outline'}`} onClick={() => setEnrollMode('tag')}>By Tag</button>
+                <button className={`btn btn-sm ${enrollMode === 'select' ? 'btn-gold' : 'btn-outline'}`} onClick={() => setEnrollMode('select')}>Select Clients</button>
               </div>
-
-              {/* Chat Transcript Area */}
-              <h4 style={{ margin: '0 0 10px 0', fontSize: '0.95em', fontFamily: 'var(--font-display)' }}>Call Dialogue Transcript</h4>
-              <div className="call-transcript-container" style={{ flex: 1, overflowY: 'auto', background: 'var(--color-bg-light)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {selectedCallLog.transcript && selectedCallLog.transcript.map((turn, index) => (
-                  <div 
-                    key={index} 
-                    className={`chat-bubble-wrapper ${turn.speaker}`}
-                    style={{ 
-                      display: 'flex', 
-                      flexDirection: 'column', 
-                      alignItems: turn.speaker === 'agent' ? 'flex-start' : 'flex-end',
-                      width: '100%'
-                    }}
-                  >
-                    <span style={{ fontSize: '0.75em', color: 'var(--color-gray-400)', marginBottom: '2px', marginLeft: turn.speaker === 'agent' ? '4px' : '0', marginRight: turn.speaker === 'customer' ? '4px' : '0' }}>
-                      {turn.speaker === 'agent' ? 'AI Voice Agent' : 'Customer'}
-                    </span>
-                    <div 
-                      className={`chat-bubble ${turn.speaker}`}
-                      style={{ 
-                        padding: '10px 14px', 
-                        borderRadius: '12px', 
-                        maxWidth: '85%', 
-                        fontSize: '0.9em', 
-                        lineHeight: '1.4',
-                        background: turn.speaker === 'agent' ? 'var(--color-white)' : 'rgba(212, 175, 55, 0.1)',
-                        color: 'var(--color-text)',
-                        border: turn.speaker === 'agent' ? '1px solid var(--color-border)' : '1px solid rgba(212, 175, 55, 0.2)',
-                        borderTopLeftRadius: turn.speaker === 'agent' ? '0' : '12px',
-                        borderTopRightRadius: turn.speaker === 'customer' ? '0' : '12px'
-                      }}
-                    >
-                      {turn.text}
+              {enrollMode === 'tag' ? (
+                <div className="form-group">
+                  <label className="form-label">Enroll all clients with tag:</label>
+                  {salonTags.length === 0 ? (
+                    <p style={{ color: 'var(--color-gray-400)', fontSize: '0.9em', marginTop: '8px' }}>No tags found. Add tags to clients first via the Clients tab.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                      {salonTags.map(tag => (
+                        <button key={tag} type="button" className={`tag-pill ${enrollTag === tag ? 'active' : ''}`}
+                          onClick={() => setEnrollTag(enrollTag === tag ? '' : tag)}>
+                          {tag}
+                        </button>
+                      ))}
                     </div>
+                  )}
+                </div>
+              ) : (
+                <div className="form-group">
+                  <label className="form-label">Select clients ({enrollSelectedClients.length} selected):</label>
+                  <div style={{ maxHeight: '240px', overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
+                    {clients.map(c => (
+                      <label key={c._id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--color-gray-100)' }}>
+                        <input type="checkbox" checked={enrollSelectedClients.includes(c._id)}
+                          onChange={e => {
+                            if (e.target.checked) setEnrollSelectedClients(ids => [...ids, c._id]);
+                            else setEnrollSelectedClients(ids => ids.filter(id => id !== c._id));
+                          }} />
+                        <span>{c.firstName} {c.lastName}</span>
+                        <span style={{ color: 'var(--color-gray-400)', fontSize: '0.8em', marginLeft: 'auto' }}>{c.phone}</span>
+                      </label>
+                    ))}
                   </div>
-                ))}
-                {(!selectedCallLog.transcript || selectedCallLog.transcript.length === 0) && (
-                  <div style={{ textAlign: 'center', color: 'var(--color-gray-400)', margin: 'auto', fontSize: '0.9em' }}>
-                    No conversation dialogue logged.
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
+              <button className="btn btn-gold btn-lg" style={{ width: '100%', marginTop: '20px' }}
+                disabled={enrollLoading || (enrollMode === 'tag' ? !enrollTag : enrollSelectedClients.length === 0)}
+                onClick={handleBulkEnroll}>
+                {enrollLoading ? 'Enrolling...' : enrollMode === 'tag' ? `Enroll by tag "${enrollTag}"` : `Enroll ${enrollSelectedClients.length} client(s)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Modify Existing Appointment Confirmation Modal */}
+      {pendingMove && (
+        <div className="centered-overlay" onClick={() => setPendingMove(null)}>
+          <div className="confirm-modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3 className="confirm-modal-title">Modify existing appointment?</h3>
+            <div className="confirm-modal-actions">
+              <button 
+                type="button" 
+                className="btn-confirm-save" 
+                onClick={async () => {
+                  const { apptId, dateStr, barberId, newStartTime } = pendingMove;
+                  setPendingMove(null);
+                  
+                  const updates = {
+                    date: dateStr,
+                    startTime: newStartTime,
+                  };
+                  if (barberId) {
+                    updates.barberId = barberId;
+                  }
+                  
+                  try {
+                    await updateAppointment(apptId, updates);
+                    loadAppointments();
+                  } catch (err) {
+                    console.error('Failed to move appointment:', err);
+                  }
+                }}
+              >
+                Save Changes
+              </button>
+              <button 
+                type="button" 
+                className="btn-confirm-back" 
+                onClick={() => setPendingMove(null)}
+              >
+                Go Back
+              </button>
             </div>
           </div>
         </div>

@@ -2,11 +2,12 @@ const mongoose = require('mongoose');
 
 const cadenceStepSchema = new mongoose.Schema({
   order: { type: Number, required: true },
-  channel: { type: String, enum: ['sms'], default: 'sms' },
-  delayValue: { type: Number, required: true },         // e.g. 48
-  delayUnit: { type: String, enum: ['hours', 'minutes'], default: 'hours' },
+  channel: { type: String, enum: ['sms', 'voice'], default: 'sms' },
+  delayValue: { type: Number, required: true },
+  delayUnit: { type: String, enum: ['minutes', 'hours', 'days'], default: 'hours' },
   delayDirection: { type: String, enum: ['before', 'after'], default: 'before' },
-  messageTemplate: { type: String, required: true },
+  messageTemplate: { type: String, default: '' },
+  voiceCallType: { type: String, enum: ['confirmation', 'feedback', 're-engagement'], default: 'confirmation' },
 }, { _id: true });
 
 const cadenceSchema = new mongoose.Schema({

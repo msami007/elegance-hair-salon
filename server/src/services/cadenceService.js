@@ -9,8 +9,7 @@ const { sendSMS } = require('./twilio');
 const dayjs = require('dayjs');
 
 /**
- * Enroll an appointment into the active pre-appointment cadence.
- * Calculates concrete scheduledAt timestamps for each step.
+ * Enroll an appointment into the active pre-appointment cadence (auto mode).
  */
 async function enrollAppointment(appointmentId) {
   try {
@@ -26,7 +25,6 @@ async function enrollAppointment(appointmentId) {
       return null;
     }
 
-    // Find active pre-appointment cadence for this salon
     const cadence = await Cadence.findOne({
       salonId: appointment.salonId,
       type: 'pre-appointment',
@@ -38,7 +36,6 @@ async function enrollAppointment(appointmentId) {
       return null;
     }
 
-    // Check if already enrolled
     const existing = await CadenceEnrollment.findOne({
       cadenceId: cadence._id,
       appointmentId: appointment._id,
@@ -49,24 +46,19 @@ async function enrollAppointment(appointmentId) {
       return existing;
     }
 
-    // Calculate the appointment datetime
     const appointmentDatetime = dayjs(`${appointment.date} ${appointment.startTime}`, 'YYYY-MM-DD HH:mm');
 
-    // Build step executions with concrete scheduled timestamps
     const stepExecutions = cadence.steps
       .sort((a, b) => a.order - b.order)
       .map(step => {
+        const unit = step.delayUnit === 'days' ? 'day' : step.delayUnit === 'hours' ? 'hour' : 'minute';
         let scheduledAt;
-
         if (step.delayDirection === 'before') {
-          scheduledAt = appointmentDatetime.subtract(step.delayValue, step.delayUnit === 'hours' ? 'hour' : 'minute');
+          scheduledAt = appointmentDatetime.subtract(step.delayValue, unit);
         } else {
-          scheduledAt = appointmentDatetime.add(step.delayValue, step.delayUnit === 'hours' ? 'hour' : 'minute');
+          scheduledAt = appointmentDatetime.add(step.delayValue, unit);
         }
-
-        // If the scheduled time is already in the past, mark it for immediate skipping
         const isPast = scheduledAt.isBefore(dayjs());
-
         return {
           stepOrder: step.order,
           scheduledAt: scheduledAt.toDate(),
@@ -82,6 +74,7 @@ async function enrollAppointment(appointmentId) {
       appointmentId: appointment._id,
       clientId: appointment.clientId._id || appointment.clientId,
       salonId: appointment.salonId,
+      source: 'auto',
       status: 'active',
       stepExecutions,
     });
@@ -96,10 +89,59 @@ async function enrollAppointment(appointmentId) {
 }
 
 /**
+ * Manually enroll a list of clients into a cadence.
+ * Steps are scheduled relative to enrollment time (now).
+ */
+async function enrollClients(cadenceId, clientIds, salonId) {
+  const cadence = await Cadence.findById(cadenceId).lean();
+  if (!cadence) throw new Error('Cadence not found');
+
+  const now = dayjs();
+  const enrolled = [];
+
+  for (const clientId of clientIds) {
+    const existing = await CadenceEnrollment.findOne({
+      cadenceId: cadence._id,
+      clientId,
+      status: { $in: ['active', 'paused'] },
+    });
+    if (existing) continue;
+
+    const stepExecutions = cadence.steps
+      .sort((a, b) => a.order - b.order)
+      .map(step => {
+        const unit = step.delayUnit === 'days' ? 'day' : step.delayUnit === 'hours' ? 'hour' : 'minute';
+        const scheduledAt = now.add(step.delayValue, unit);
+        return {
+          stepOrder: step.order,
+          scheduledAt: scheduledAt.toDate(),
+          executedAt: null,
+          status: 'pending',
+          messageSid: '',
+          error: '',
+        };
+      });
+
+    const enrollment = await CadenceEnrollment.create({
+      cadenceId: cadence._id,
+      clientId,
+      salonId,
+      source: 'manual',
+      status: 'active',
+      stepExecutions,
+    });
+    enrolled.push(enrollment);
+  }
+
+  console.log(`[Cadence] Manually enrolled ${enrolled.length}/${clientIds.length} clients in "${cadence.name}"`);
+  return enrolled;
+}
+
+/**
  * Resolve template variables in a message template.
  */
 function resolveTemplate(template, vars) {
-  return template
+  return (template || '')
     .replace(/\{\{firstName\}\}/g, vars.firstName || '')
     .replace(/\{\{lastName\}\}/g, vars.lastName || '')
     .replace(/\{\{serviceName\}\}/g, vars.serviceName || '')
@@ -112,13 +154,11 @@ function resolveTemplate(template, vars) {
 
 /**
  * Process all pending cadence steps that are due for execution.
- * This is the "tick" function called by the scheduler.
  */
 async function processPendingSteps() {
   try {
     const now = new Date();
 
-    // Find active enrollments with at least one pending step that is due
     const enrollments = await CadenceEnrollment.find({
       status: 'active',
       stepExecutions: {
@@ -136,95 +176,140 @@ async function processPendingSteps() {
     let totalSkipped = 0;
 
     for (const enrollment of enrollments) {
-      // Check if the appointment is still valid (not cancelled)
-      const appointment = await Appointment.findById(enrollment.appointmentId)
-        .populate('clientId')
-        .populate('barberId')
-        .populate('serviceId')
-        .populate('locationId')
-        .lean();
+      let appointment = null;
+      let client = null;
+      let templateVars;
 
-      if (!appointment || appointment.status === 'cancelled') {
-        // Cancel all pending steps
-        await CadenceEnrollment.updateOne(
-          { _id: enrollment._id },
-          {
-            $set: {
-              status: 'cancelled',
-              'stepExecutions.$[elem].status': 'skipped',
-              'stepExecutions.$[elem].executedAt': now,
-              'stepExecutions.$[elem].error': 'Appointment was cancelled',
+      if (enrollment.appointmentId) {
+        appointment = await Appointment.findById(enrollment.appointmentId)
+          .populate('clientId')
+          .populate('barberId')
+          .populate('serviceId')
+          .populate('locationId')
+          .lean();
+
+        if (!appointment || appointment.status === 'cancelled') {
+          await CadenceEnrollment.updateOne(
+            { _id: enrollment._id },
+            {
+              $set: {
+                status: 'cancelled',
+                'stepExecutions.$[elem].status': 'skipped',
+                'stepExecutions.$[elem].executedAt': now,
+                'stepExecutions.$[elem].error': 'Appointment was cancelled',
+              },
             },
-          },
-          { arrayFilters: [{ 'elem.status': 'pending' }] }
-        );
-        totalSkipped++;
-        continue;
+            { arrayFilters: [{ 'elem.status': 'pending' }] }
+          );
+          totalSkipped++;
+          continue;
+        }
+
+        client = appointment.clientId || {};
+        templateVars = {
+          firstName: client.firstName || 'there',
+          lastName: client.lastName || '',
+          serviceName: appointment.serviceId?.name || 'your appointment',
+          barberName: appointment.barberId?.name || 'your stylist',
+          date: dayjs(appointment.date).format('ddd, MMM D'),
+          time: dayjs(`${appointment.date} ${appointment.startTime}`, 'YYYY-MM-DD HH:mm').format('h:mm A'),
+          locationName: appointment.locationId?.name || 'Elegance Salon',
+          locationAddress: appointment.locationId?.address || '',
+        };
+      } else {
+        client = await Client.findById(enrollment.clientId).lean();
+        if (!client) continue;
+        templateVars = {
+          firstName: client.firstName || 'there',
+          lastName: client.lastName || '',
+          serviceName: 'your appointment',
+          barberName: 'your stylist',
+          date: '',
+          time: '',
+          locationName: 'Elegance Salon',
+          locationAddress: '',
+        };
       }
 
-      // Load the cadence to get message templates
       const cadence = await Cadence.findById(enrollment.cadenceId).lean();
       if (!cadence) continue;
 
-      // Prepare template variables
-      const client = appointment.clientId || {};
-      const templateVars = {
-        firstName: client.firstName || 'there',
-        lastName: client.lastName || '',
-        serviceName: appointment.serviceId?.name || 'your appointment',
-        barberName: appointment.barberId?.name || 'your stylist',
-        date: dayjs(appointment.date).format('ddd, MMM D'),
-        time: dayjs(`${appointment.date} ${appointment.startTime}`, 'YYYY-MM-DD HH:mm').format('h:mm A'),
-        locationName: appointment.locationId?.name || 'Elegance Salon',
-        locationAddress: appointment.locationId?.address || '',
-      };
-
-      // Process each due step
       for (const stepExec of enrollment.stepExecutions) {
         if (stepExec.status !== 'pending') continue;
         if (new Date(stepExec.scheduledAt) > now) continue;
 
-        // Find the corresponding cadence step definition
         const stepDef = cadence.steps.find(s => s.order === stepExec.stepOrder);
         if (!stepDef) continue;
 
-        // Resolve template
-        const messageBody = resolveTemplate(stepDef.messageTemplate, templateVars);
+        if (stepDef.channel === 'voice') {
+          const voiceService = require('./voiceService');
+          const callResult = await voiceService.triggerOutboundCall({
+            clientId: client._id || enrollment.clientId,
+            type: stepDef.voiceCallType || 're-engagement',
+            salonId: enrollment.salonId,
+            appointmentId: enrollment.appointmentId || undefined,
+          });
 
-        // Send SMS
-        const smsResult = await sendSMS({
-          to: client.phone,
-          body: messageBody,
-        });
-
-        if (smsResult.success) {
-          await CadenceEnrollment.updateOne(
-            { _id: enrollment._id, 'stepExecutions.stepOrder': stepExec.stepOrder },
-            {
-              $set: {
-                'stepExecutions.$.status': 'sent',
-                'stepExecutions.$.executedAt': new Date(),
-                'stepExecutions.$.messageSid': smsResult.messageSid || '',
-              },
-            }
-          );
-          totalSent++;
+          if (callResult.success) {
+            await CadenceEnrollment.updateOne(
+              { _id: enrollment._id, 'stepExecutions.stepOrder': stepExec.stepOrder },
+              {
+                $set: {
+                  'stepExecutions.$.status': 'sent',
+                  'stepExecutions.$.executedAt': new Date(),
+                  'stepExecutions.$.messageSid': callResult.callLogId || '',
+                },
+              }
+            );
+            totalSent++;
+          } else {
+            await CadenceEnrollment.updateOne(
+              { _id: enrollment._id, 'stepExecutions.stepOrder': stepExec.stepOrder },
+              {
+                $set: {
+                  'stepExecutions.$.status': 'failed',
+                  'stepExecutions.$.executedAt': new Date(),
+                  'stepExecutions.$.error': callResult.error || 'Voice call failed',
+                },
+              }
+            );
+            totalFailed++;
+          }
         } else {
-          await CadenceEnrollment.updateOne(
-            { _id: enrollment._id, 'stepExecutions.stepOrder': stepExec.stepOrder },
-            {
-              $set: {
-                'stepExecutions.$.status': 'failed',
-                'stepExecutions.$.executedAt': new Date(),
-                'stepExecutions.$.error': smsResult.error || 'Unknown SMS error',
-              },
-            }
-          );
-          totalFailed++;
+          const messageBody = resolveTemplate(stepDef.messageTemplate, templateVars);
+          const smsResult = await sendSMS({
+            to: client.phone,
+            body: messageBody,
+          });
+
+          if (smsResult.success) {
+            await CadenceEnrollment.updateOne(
+              { _id: enrollment._id, 'stepExecutions.stepOrder': stepExec.stepOrder },
+              {
+                $set: {
+                  'stepExecutions.$.status': 'sent',
+                  'stepExecutions.$.executedAt': new Date(),
+                  'stepExecutions.$.messageSid': smsResult.messageSid || '',
+                },
+              }
+            );
+            totalSent++;
+          } else {
+            await CadenceEnrollment.updateOne(
+              { _id: enrollment._id, 'stepExecutions.stepOrder': stepExec.stepOrder },
+              {
+                $set: {
+                  'stepExecutions.$.status': 'failed',
+                  'stepExecutions.$.executedAt': new Date(),
+                  'stepExecutions.$.error': smsResult.error || 'Unknown SMS error',
+                },
+              }
+            );
+            totalFailed++;
+          }
         }
       }
 
-      // Check if all steps are done — mark enrollment as completed
       const updatedEnrollment = await CadenceEnrollment.findById(enrollment._id).lean();
       const allDone = updatedEnrollment.stepExecutions.every(s => s.status !== 'pending');
       if (allDone) {
@@ -271,6 +356,7 @@ async function cancelEnrollment(appointmentId) {
 
 module.exports = {
   enrollAppointment,
+  enrollClients,
   processPendingSteps,
   cancelEnrollment,
 };

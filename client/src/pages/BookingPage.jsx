@@ -215,7 +215,7 @@ export default function BookingPage() {
   const isBarberAvailable = useCallback((barberId) => {
     if (!barberId) return false;
     const barberAvail = availability[barberId];
-    if (!barberAvail) return true; // fallback
+    if (!barberAvail) return false; // fallback
     const slot = barberAvail.slots?.find(s => s.startTime === selectedTime);
     return slot ? slot.available : false;
   }, [availability, selectedTime]);

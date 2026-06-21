@@ -3,19 +3,27 @@ const Appointment = require('../models/Appointment');
 const Service = require('../models/Service');
 const Location = require('../models/Location');
 
-// GET /api/reports/barber-performance?salonId=
+// GET /api/reports/barber-performance?salonId=&locationId=
 exports.getBarberPerformance = async (req, res) => {
   try {
-    const { salonId } = req.query;
+    const { salonId, locationId } = req.query;
     if (!salonId) {
       return res.status(400).json({ error: 'salonId parameter is required' });
     }
 
-    // 1. Fetch all barbers for this salon (including inactive, to show historical stats)
-    const barbers = await Barber.find({ salonId }).lean();
+    // 1. Fetch all barbers for this salon and optionally location (including inactive, to show historical stats)
+    const barberFilter = { salonId };
+    if (locationId) {
+      barberFilter.locationId = locationId;
+    }
+    const barbers = await Barber.find(barberFilter).lean();
 
-    // 2. Fetch all appointments for this salon, populating locationId and serviceId details
-    const appointments = await Appointment.find({ salonId })
+    // 2. Fetch all appointments for this salon and optionally location, populating locationId and serviceId details
+    const appointmentFilter = { salonId };
+    if (locationId) {
+      appointmentFilter.locationId = locationId;
+    }
+    const appointments = await Appointment.find(appointmentFilter)
       .populate('locationId')
       .populate('serviceId')
       .lean();

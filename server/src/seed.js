@@ -60,21 +60,12 @@ async function seed() {
     email: '1704elegance@gmail.com',
   });
 
-  // ── Barbers (from Booksy audit — Evanston location) ──
-  const lucky = await Barber.create({
-    salonId: salon._id, locationId: evanston._id,
-    name: 'Lucky', title: 'Master Barber', role: 'owner',
-    phone: '+17084005589', email: '1704elegance@gmail.com',
-    photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80',
-    bio: 'Owner and master barber with over 15 years of experience. Specializes in classic cuts, fades, and beard grooming.',
-    specialisms: ['classic', 'fade', 'skin-fade', 'beard', 'textured', 'buzz'],
-  });
-
+  // ── Barbers (from Booksy audit — Evanston location: 3 barbers) ──
   const oskar = await Barber.create({
     salonId: salon._id, locationId: evanston._id,
     name: 'Oskar', title: 'Master Hairdresser', role: 'staffer',
     phone: '+17087173210', email: 'askarsaleh1973@icloud.com',
-    photo: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=300&auto=format&fit=crop&q=80',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/447550/resource_photos/b759a5caa5034cf7a8e4ccafb52019-elegance-hair-salon-barbershop-oskar-cecbb7d16da343fc8535d6da3d68e4-booksy.jpeg',
     bio: 'Master hairdresser with expertise in color, styling, and women\'s cuts. Known for precision and artistry.',
     specialisms: ['color', 'highlights', 'balayage', 'styling', 'blowout', 'curly', 'extensions'],
   });
@@ -83,7 +74,7 @@ async function seed() {
     salonId: salon._id, locationId: evanston._id,
     name: 'Shamiram', title: 'Master Hairstylist', role: 'basic_staffer',
     phone: '+18478771078', email: 'shamiram1991@yahoo.com',
-    photo: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&auto=format&fit=crop&q=80',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/447550/resource_photos/d485c125cb7b4e5ca85367b09233c0-elegance-hair-salon-barbershop-shamiram-60eec0c9f71749ea8cbbc568717c51-booksy.jpeg',
     bio: 'Master hairstylist specializing in color techniques, smoothing treatments, and formal styling.',
     specialisms: ['color', 'keratin', 'smoothing', 'perm', 'styling', 'updo', 'highlights', 'balayage'],
   });
@@ -92,28 +83,82 @@ async function seed() {
     salonId: salon._id, locationId: evanston._id,
     name: 'Ahmad', title: 'Skin Fade Specialist', role: 'basic_staffer',
     phone: '+12243823301', email: 'oskarahmad33@gmail.com',
-    photo: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=300&auto=format&fit=crop&q=80',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/447550/resource_photos/1cd11aa774d64a29a4bd0f523bfcad-elegance-hair-salon-barbershop-ahmad-fb462bbb29d645d7be3c49480a31a4-booksy.jpeg',
     bio: 'Skin fade specialist with sharp precision in fades, lineups, and modern men\'s styles.',
     specialisms: ['skin-fade', 'fade', 'beard', 'textured', 'lineup', 'buzz'],
   });
 
-  // ── Chicago Barbers ──
-  const marcus = await Barber.create({
+  // ── Chicago Barbers (from Booksy audit — Chicago location: 8 barbers) ──
+  const lucky = await Barber.create({
     salonId: salon._id, locationId: chicago._id,
-    name: 'Marcus', title: 'Senior Barber', role: 'staffer',
-    phone: '+13125552001', email: 'marcus.chicago@elegance.com',
-    photo: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=300&auto=format&fit=crop&q=80',
-    bio: 'Senior Chicago barber specializing in modern skin fades, custom beard line-ups, and classic hot towel shaves.',
+    name: 'Lucky', title: 'Master Barber', role: 'owner',
+    phone: '+17084005589', email: '1704elegance@gmail.com',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/1385488/resource_photos/8a0b82f7c74c43a68890dc4e8f47ce-elegance-hair-salon-barbershop-lucky-464c342fe6ad45eb90ebf01a126844-booksy.jpeg',
+    bio: 'Owner and master barber with over 15 years of experience. Specializes in classic cuts, fades, and beard grooming.',
+    specialisms: ['classic', 'fade', 'skin-fade', 'beard', 'textured', 'buzz'],
+  });
+
+  const sam = await Barber.create({
+    salonId: salon._id, locationId: chicago._id,
+    name: 'Sam', title: 'Master Barber', role: 'staffer',
+    phone: '+13125552001', email: 'sam.chicago@elegance.com',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/1385488/resource_photos/3481b2f1495e4961a8d8740eacbab0-elegance-hair-salon-barbershop-sam-ea10b1bd6ac741018839d772e93679-booksy.jpeg',
+    bio: 'Master barber specializing in precision fades, custom beard trims, and modern styling.',
     specialisms: ['skin-fade', 'fade', 'beard', 'classic', 'buzz', 'lineup'],
   });
 
-  const elena = await Barber.create({
+  const sofi = await Barber.create({
     salonId: salon._id, locationId: chicago._id,
-    name: 'Elena', title: 'Lead Hairstylist', role: 'staffer',
-    phone: '+13125552002', email: 'elena.chicago@elegance.com',
-    photo: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&auto=format&fit=crop&q=80',
-    bio: 'Lead Chicago stylist with expertise in color, highlights, balayage, keratin treatments, and custom styles.',
-    specialisms: ['color', 'highlights', 'balayage', 'styling', 'blowout', 'keratin', 'smoothing'],
+    name: 'Sofi', title: 'Hairstylist', role: 'staffer',
+    phone: '+13125552002', email: 'sofi.chicago@elegance.com',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/1385488/resource_photos/ca7a94abf1d34ed48abc6e288f13e3-elegance-hair-salon-barbershop-sofi-17abf62c9ca6482a9574096a797a47-booksy.jpeg',
+    bio: 'Stylist with expertise in hair coloring, highlights, balayage, and styling.',
+    specialisms: ['color', 'highlights', 'balayage', 'styling', 'blowout', 'keratin'],
+  });
+
+  const aboshi = await Barber.create({
+    salonId: salon._id, locationId: chicago._id,
+    name: 'Aboshi', title: 'Fade Specialist & Barber', role: 'staffer',
+    phone: '+13125552005', email: 'aboshi.chicago@elegance.com',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/1385488/resource_photos/ec3d1402ccb342fe964c8c4ce0000b-elegance-hair-salon-barbershop-aboshi-f344752485d24cec942457c1caaf8f-booksy.jpeg',
+    bio: 'Fade specialist known for consistent, clean lineups and perfect skin fades.',
+    specialisms: ['skin-fade', 'fade', 'classic', 'lineup', 'beard'],
+  });
+
+  const medo = await Barber.create({
+    salonId: salon._id, locationId: chicago._id,
+    name: 'Medo', title: 'Stylist & Blowout Specialist', role: 'basic_staffer',
+    phone: '+13125552003', email: 'medo.chicago@elegance.com',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/1385488/resource_photos/16ce653464954ed58d55b18650e82b-elegance-hair-salon-barbershop-medo-62a56eae01444efe99a9870cd4dd15-booksy.jpeg',
+    bio: 'Stylist noted for providing excellent blowouts and precision cuts.',
+    specialisms: ['blowout', 'styling', 'classic', 'highlights'],
+  });
+
+  const dilbara = await Barber.create({
+    salonId: salon._id, locationId: chicago._id,
+    name: 'Dilbara', title: 'Senior Stylist', role: 'staffer',
+    phone: '+13125552006', email: 'dilbara.chicago@elegance.com',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/1385488/resource_photos/db1b21d0a8f340308192e1ea32bfa8-elegance-hair-salon-barbershop-dilbara-08f297e341a44171b25b8cb4dcdfb7-booksy.jpeg',
+    bio: 'Expert hairstylist specializing in creative color work, highlighting techniques, and precision cuts.',
+    specialisms: ['color', 'highlights', 'balayage', 'styling', 'classic'],
+  });
+
+  const teo = await Barber.create({
+    salonId: salon._id, locationId: chicago._id,
+    name: 'Teo', title: 'Master Barber', role: 'staffer',
+    phone: '+13125552007', email: 'teo.chicago@elegance.com',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/1385488/resource_photos/853a6453765a4279a0e2ed919c3ac6-elegance-hair-salon-barbershop-teo-f74775abcf0b43f8b4274b6c1c494e-booksy.jpeg',
+    bio: 'Master barber with a passion for classic cuts, modern styling, and clean shaves.',
+    specialisms: ['classic', 'fade', 'beard', 'buzz', 'styling'],
+  });
+
+  const nedal = await Barber.create({
+    salonId: salon._id, locationId: chicago._id,
+    name: 'Nedal', title: 'Hairstylist', role: 'basic_staffer',
+    phone: '+13125552004', email: 'nedal.chicago@elegance.com',
+    photo: 'https://d2zdpiztbgorvt.cloudfront.net/region1/us/1385488/resource_photos/be38043475224fee807f0a508f302b-elegance-hair-salon-barbershop-nedal-9de5339f91d94ef3a09a27b99868ff-booksy.jpeg',
+    bio: 'Experienced hair specialist delivering high-quality blowouts, treatments, and styling.',
+    specialisms: ['blowout', 'styling', 'color', 'keratin'],
   });
 
   // ── Service Templates (to populate both locations) ──
@@ -188,7 +233,7 @@ async function seed() {
     { salonId: salon._id, firstName: 'Maria', lastName: 'Rodriguez', phone: '+13125551002', email: 'maria.r@email.com', visitCount: 12, hairType: 'curly', source: 'booksy-import', lastVisit: dayjs().subtract(5, 'day').toDate(), preferredBarberId: shamiram._id },
     { salonId: salon._id, firstName: 'James', lastName: 'Chen', phone: '+13125551003', email: 'james.c@email.com', visitCount: 5, hairType: 'straight', source: 'booksy-import', lastVisit: dayjs().subtract(42, 'day').toDate(), preferredBarberId: lucky._id },
     { salonId: salon._id, firstName: 'Sophia', lastName: 'Williams', phone: '+13125551004', email: 'sophia.w@email.com', visitCount: 3, hairType: 'wavy', source: 'booking-form', lastVisit: dayjs().subtract(74, 'day').toDate(), preferredBarberId: oskar._id },
-    { salonId: salon._id, firstName: 'Michael', lastName: 'Johnson', phone: '+13125551005', email: 'mike.j@email.com', visitCount: 15, hairType: 'curly', source: 'booksy-import', lastVisit: dayjs().subtract(105, 'day').toDate(), preferredBarberId: marcus._id },
+    { salonId: salon._id, firstName: 'Michael', lastName: 'Johnson', phone: '+13125551005', email: 'mike.j@email.com', visitCount: 15, hairType: 'curly', source: 'booksy-import', lastVisit: dayjs().subtract(105, 'day').toDate(), preferredBarberId: sam._id },
   ]);
 
   // ── Sample Appointments (this week) ──
@@ -203,38 +248,46 @@ async function seed() {
 
   const chicagoMenscut = services.find(s => s.name === "Men's Barber Style Cut" && s.locationId.equals(chicago._id));
   const chicagoWomenscut = services.find(s => s.name === "Women's Haircut" && s.locationId.equals(chicago._id));
+  const chicagoBeard = services.find(s => s.name === "Beard Trim - Straight Razor" && s.locationId.equals(chicago._id));
+  const chicagoBlowdry = services.find(s => s.name === "Blow Dry" && s.locationId.equals(chicago._id));
 
   await Appointment.insertMany([
     // Evanston Monday
     { salonId: salon._id, locationId: evanston._id, clientId: clients[0]._id, barberId: ahmad._id, serviceId: evanstonMenscut._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '09:00', endTime: '09:30', status: 'confirmed', source: 'online', haircutStyle: 'skin-fade', totalPrice: 4500 },
     { salonId: salon._id, locationId: evanston._id, clientId: clients[1]._id, barberId: shamiram._id, serviceId: evanstonBalayage._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '10:00', endTime: '12:15', status: 'confirmed', source: 'online', haircutStyle: 'balayage', totalPrice: 28500 },
-    { salonId: salon._id, locationId: evanston._id, clientId: clients[4]._id, barberId: lucky._id, serviceId: evanstonMenscut._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '11:00', endTime: '11:30', status: 'confirmed', source: 'phone', haircutStyle: 'classic', totalPrice: 4500 },
+    { salonId: salon._id, locationId: evanston._id, clientId: clients[4]._id, barberId: oskar._id, serviceId: evanstonMenscut._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '11:00', endTime: '11:30', status: 'confirmed', source: 'phone', haircutStyle: 'classic', totalPrice: 4500 },
     // Evanston Tuesday
     { salonId: salon._id, locationId: evanston._id, clientId: clients[2]._id, barberId: ahmad._id, serviceId: evanstonMenscut._id, date: weekStart.add(2, 'day').format('YYYY-MM-DD'), startTime: '08:30', endTime: '09:00', status: 'confirmed', source: 'online', haircutStyle: 'fade', totalPrice: 4500 },
     { salonId: salon._id, locationId: evanston._id, clientId: clients[3]._id, barberId: oskar._id, serviceId: evanstonWomenscut._id, date: weekStart.add(2, 'day').format('YYYY-MM-DD'), startTime: '10:00', endTime: '11:00', status: 'confirmed', source: 'online', haircutStyle: 'styling', totalPrice: 7500 },
     // Evanston Wednesday
-    { salonId: salon._id, locationId: evanston._id, clientId: clients[0]._id, barberId: lucky._id, serviceId: evanstonBeard._id, date: weekStart.add(3, 'day').format('YYYY-MM-DD'), startTime: '14:00', endTime: '14:25', status: 'confirmed', source: 'walk-in', haircutStyle: 'beard', totalPrice: 4000 },
+    { salonId: salon._id, locationId: evanston._id, clientId: clients[0]._id, barberId: ahmad._id, serviceId: evanstonBeard._id, date: weekStart.add(3, 'day').format('YYYY-MM-DD'), startTime: '14:00', endTime: '14:25', status: 'confirmed', source: 'walk-in', haircutStyle: 'beard', totalPrice: 4000 },
     { salonId: salon._id, locationId: evanston._id, clientId: clients[1]._id, barberId: oskar._id, serviceId: evanstonBlowdry._id, date: weekStart.add(3, 'day').format('YYYY-MM-DD'), startTime: '13:00', endTime: '13:45', status: 'confirmed', source: 'phone', haircutStyle: 'blowout', totalPrice: 5500 },
     // Evanston Thursday
     { salonId: salon._id, locationId: evanston._id, clientId: clients[4]._id, barberId: ahmad._id, serviceId: evanstonMenscut._id, date: weekStart.add(4, 'day').format('YYYY-MM-DD'), startTime: '09:00', endTime: '09:30', status: 'confirmed', source: 'online', haircutStyle: 'skin-fade', totalPrice: 4500 },
     { salonId: salon._id, locationId: evanston._id, clientId: clients[3]._id, barberId: shamiram._id, serviceId: evanstonWomenscut._id, date: weekStart.add(4, 'day').format('YYYY-MM-DD'), startTime: '15:00', endTime: '16:00', status: 'confirmed', source: 'online', haircutStyle: 'styling', totalPrice: 7500 },
     // Evanston Friday
-    { salonId: salon._id, locationId: evanston._id, clientId: clients[2]._id, barberId: lucky._id, serviceId: evanstonMenscut._id, date: weekStart.add(5, 'day').format('YYYY-MM-DD'), startTime: '10:00', endTime: '10:30', status: 'confirmed', source: 'instagram', haircutStyle: 'classic', totalPrice: 4500 },
+    { salonId: salon._id, locationId: evanston._id, clientId: clients[2]._id, barberId: ahmad._id, serviceId: evanstonMenscut._id, date: weekStart.add(5, 'day').format('YYYY-MM-DD'), startTime: '10:00', endTime: '10:30', status: 'confirmed', source: 'instagram', haircutStyle: 'classic', totalPrice: 4500 },
 
-    // Chicago Monday (Marcus & Elena)
-    { salonId: salon._id, locationId: chicago._id, clientId: clients[0]._id, barberId: marcus._id, serviceId: chicagoMenscut._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '09:30', endTime: '10:00', status: 'confirmed', source: 'online', haircutStyle: 'fade', totalPrice: 6500 },
-    { salonId: salon._id, locationId: chicago._id, clientId: clients[1]._id, barberId: elena._id, serviceId: chicagoWomenscut._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '11:00', endTime: '12:00', status: 'confirmed', source: 'online', haircutStyle: 'styling', totalPrice: 9500 },
-    // Chicago Wednesday
-    { salonId: salon._id, locationId: chicago._id, clientId: clients[3]._id, barberId: marcus._id, serviceId: chicagoMenscut._id, date: weekStart.add(3, 'day').format('YYYY-MM-DD'), startTime: '15:00', endTime: '15:30', status: 'confirmed', source: 'walk-in', haircutStyle: 'skin-fade', totalPrice: 6500 },
+    // Chicago Monday (Sam, Sofi, Lucky)
+    { salonId: salon._id, locationId: chicago._id, clientId: clients[0]._id, barberId: sam._id, serviceId: chicagoMenscut._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '09:30', endTime: '10:00', status: 'confirmed', source: 'online', haircutStyle: 'fade', totalPrice: 6500 },
+    { salonId: salon._id, locationId: chicago._id, clientId: clients[1]._id, barberId: sofi._id, serviceId: chicagoWomenscut._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '11:00', endTime: '12:00', status: 'confirmed', source: 'online', haircutStyle: 'styling', totalPrice: 9500 },
+    { salonId: salon._id, locationId: chicago._id, clientId: clients[2]._id, barberId: lucky._id, serviceId: chicagoMenscut._id, date: weekStart.add(1, 'day').format('YYYY-MM-DD'), startTime: '14:00', endTime: '14:30', status: 'confirmed', source: 'phone', haircutStyle: 'classic', totalPrice: 6500 },
+    // Chicago Tuesday (Aboshi, Dilbara)
+    { salonId: salon._id, locationId: chicago._id, clientId: clients[3]._id, barberId: aboshi._id, serviceId: chicagoMenscut._id, date: weekStart.add(2, 'day').format('YYYY-MM-DD'), startTime: '10:00', endTime: '10:30', status: 'confirmed', source: 'online', haircutStyle: 'skin-fade', totalPrice: 6500 },
+    { salonId: salon._id, locationId: chicago._id, clientId: clients[4]._id, barberId: dilbara._id, serviceId: chicagoWomenscut._id, date: weekStart.add(2, 'day').format('YYYY-MM-DD'), startTime: '13:00', endTime: '14:00', status: 'confirmed', source: 'online', haircutStyle: 'styling', totalPrice: 9500 },
+    // Chicago Wednesday (Sam, Medo, Teo)
+    { salonId: salon._id, locationId: chicago._id, clientId: clients[3]._id, barberId: sam._id, serviceId: chicagoMenscut._id, date: weekStart.add(3, 'day').format('YYYY-MM-DD'), startTime: '15:00', endTime: '15:30', status: 'confirmed', source: 'walk-in', haircutStyle: 'skin-fade', totalPrice: 6500 },
+    { salonId: salon._id, locationId: chicago._id, clientId: clients[0]._id, barberId: medo._id, serviceId: chicagoBlowdry._id, date: weekStart.add(3, 'day').format('YYYY-MM-DD'), startTime: '11:00', endTime: '11:45', status: 'confirmed', source: 'instagram', haircutStyle: 'blowout', totalPrice: 6500 },
+    { salonId: salon._id, locationId: chicago._id, clientId: clients[1]._id, barberId: teo._id, serviceId: chicagoBeard._id, date: weekStart.add(3, 'day').format('YYYY-MM-DD'), startTime: '16:00', endTime: '16:25', status: 'confirmed', source: 'online', haircutStyle: 'beard', totalPrice: 5000 },
   ]);
 
   console.log('✅ Seed complete!');
   console.log(`   Salon: ${salon.name}`);
   console.log(`   Locations: Chicago, Evanston`);
-  console.log(`   Barbers: Lucky, Oskar, Shamiram, Ahmad (Evanston) | Marcus, Elena (Chicago)`);
+  console.log(`   Barbers: Oskar, Shamiram, Ahmad (Evanston: 3) | Lucky, Sam, Sofi, Aboshi, Medo, Dilbara, Teo, Nedal (Chicago: 8)`);
   console.log(`   Services: ${services.length} (across both locations)`);
   console.log(`   Clients: ${clients.length}`);
-  console.log(`   Appointments: 13 sample`);
+  console.log(`   Appointments: 18 sample`);
   console.log(`\n   Salon ID: ${salon._id}`);
   console.log(`   Evanston Location ID: ${evanston._id}`);
   console.log(`   Chicago Location ID: ${chicago._id}`);

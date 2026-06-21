@@ -11,14 +11,14 @@ const stepExecutionSchema = new mongoose.Schema({
 
 const cadenceEnrollmentSchema = new mongoose.Schema({
   cadenceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Cadence', required: true },
-  appointmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment', required: true },
+  appointmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment', default: null },
   clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', required: true },
   salonId: { type: mongoose.Schema.Types.ObjectId, ref: 'Salon', required: true, index: true },
+  source: { type: String, enum: ['auto', 'manual'], default: 'auto' },
   status: { type: String, enum: ['active', 'completed', 'cancelled', 'paused'], default: 'active' },
   stepExecutions: [stepExecutionSchema],
 }, { timestamps: true });
 
-// Index for scheduler queries: find pending steps efficiently
 cadenceEnrollmentSchema.index({ status: 1, 'stepExecutions.status': 1, 'stepExecutions.scheduledAt': 1 });
 
 module.exports = mongoose.model('CadenceEnrollment', cadenceEnrollmentSchema);
